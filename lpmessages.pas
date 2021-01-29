@@ -55,8 +55,10 @@ const
   lpeExceptionAt = '%s at line %d, column %d';
   lpeExceptionIn = '%s in file "%s"';
   lpeExpected = '%s expected';
+  lpeExpectedNormalMethod = 'Normal method expected';
   lpeExpectedOther = 'Found unexpected token "%s", expected "%s"';
   lpeExpressionExpected = 'Expression expected';
+  lpeExpectedEnum = 'Enum expected';
   lpeFileNotFound = 'File "%s" not found';
   lpeImpossible = 'It''s impossible!';
   lpeIncompatibleAssignment = 'Can''t assign "%s" to "%s"';
@@ -65,6 +67,7 @@ const
   lpeIncompatibleOperator2 = 'Operator "%s" not compatible with types "%s" and "%s"';
   lpeInvalidAssignment = 'Invalid assignment';
   lpeInvalidCast = 'Invalid cast';
+  lpeInvalidCaseStatement = 'Invalid case statement';
   lpeInvalidCondition = 'Invalid condition';
   lpeInvalidEvaluation = 'Invalid evaluation';
   lpeInvalidForward = 'Forwarded declaration "%s" not resolved';

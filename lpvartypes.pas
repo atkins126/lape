@@ -18,7 +18,7 @@ uses
 type
   ECompilerOption = (
     lcoAssertions,                     // {$C} {$ASSERTIONS}
-    lcoRangeCheck,                     // {$R} {$RANGECHECKS}      TODO
+    lcoRangeCheck,                     // {$R} {$RANGECHECKS}
     lcoShortCircuit,                   // {$B} {$BOOLEVAL}
     lcoAlwaysInitialize,               // {$M} {$MEMORYINIT}
     lcoFullDisposal,                   // {$D} {$FULLDISPOSAL}
@@ -31,13 +31,14 @@ type
     lcoHints,                          // {$H} {$HINTS}
     lcoContinueCase,                   //      {$CONTINUECASE}
     lcoCOperators,                     //      {$COPERATORS}
+    lcoAutoObjectify,                  //      {$AUTOOBJECTIFY}
     lcoInitExternalResult              // Ensure empty result for external calls (useful for ffi)
   );
   ECompilerOptionsSet = set of ECompilerOption;
   PCompilerOptionsSet = ^ECompilerOptionsSet;
 
 const
-  Lape_OptionsDef = [lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress];
+  Lape_OptionsDef = [lcoAutoObjectify, lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress];
   Lape_PackRecordsDef = 8;
 
 type
@@ -740,7 +741,7 @@ implementation
 
 uses
   {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
-  lpvartypes_ord, lpvartypes_array,
+  lpvartypes_ord, lpvartypes_array, lptree,
   lpmessages, lpeval, lpinterpreter;
 
 
@@ -2511,6 +2512,9 @@ begin
   Params.ImportFromArray(AMethod.Params.ExportToArray());
 
   ImplicitParams := AMethod.ImplicitParams;
+  IsOperator := AMethod.IsOperator;
+  DeprecatedHint := AMethod.DeprecatedHint;
+  HintDirectives := AMethod.HintDirectives;
 
   inheritManagedDecls(AMethod);
   TypeID := AMethod.TypeID;
@@ -2530,6 +2534,9 @@ begin
     Result := TLapeClassType(Self.ClassType).Create(FCompiler, FParams, Res, Name, @_DocPos);
 
   TLapeType_Method(Result).ImplicitParams := ImplicitParams;
+  TLapeType_Method(Result).IsOperator := IsOperator;
+  TLapeType_Method(Result).DeprecatedHint := DeprecatedHint;
+  TLapeType_Method(Result).HintDirectives := HintDirectives;
 
   Result.inheritManagedDecls(Self, not DeepCopy);
   Result.TypeID := TypeID;
@@ -2761,6 +2768,13 @@ begin
       Right := m.VarType;
   end;
 
+  if (lcoAutoObjectify in FCompiler.Options) then
+    if (op = op_Assign) and (Right <> nil) and (Right.ClassType = TLapeType_Method) and TLapeType_Method(Right).EqualParams(Self) then
+    begin
+      Result := Self;
+      Exit;
+    end;
+
   if (Op in CompareOperators + [op_Assign]) then
     Result := inherited
   else if CompatibleWith(Right) then
@@ -2828,6 +2842,19 @@ begin
       Right := Right.VarType.Eval(op_Index, tmpRes, Right, _ResVar.New(FCompiler.getConstant(MethodIndex)), Flags, Offset, Pos);
     end;
   end;
+
+  if (lcoAutoObjectify in FCompiler.Options) then
+    if (Op = op_Assign) and Right.HasType and (Right.VarType.ClassType = TLapeType_Method) then
+    begin
+      with TLapeTree_InternalMethod_Objectify.Create(FCompiler, Pos) do
+      try
+        addParam(TLapeTree_ResVar.Create(Right.IncLock(), FCompiler));
+
+        Right := Compile(Offset);
+      finally
+        Free();
+      end;
+    end;
 
   if (Op in CompareOperators) then
     Result := inherited

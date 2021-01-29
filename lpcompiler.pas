@@ -106,6 +106,7 @@ type
     function popConditional: TDocPos; virtual;
 
     procedure SetUniqueTypeID(Typ: TLapeType); virtual;
+    function GetObjectifyMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetDisposeMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetCopyMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetToStringMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
@@ -142,7 +143,7 @@ type
     procedure ParseLabelBlock; virtual;
     function ParseVarBlock(OneOnly: Boolean = False; ValidEnd: EParserTokenSet = [tk_sym_SemiColon]): TLapeTree_VarList; virtual;
 
-    function ParseExpression(ReturnOn: EParserTokenSet = []; FirstNext: Boolean = True; DoFold: Boolean = True): TLapeTree_ExprBase; virtual;
+    function ParseExpression(ReturnOn: EParserTokenSet = []; FirstNext: Boolean = True; DoFold: Boolean = True; IsInternalMethod: Boolean = False): TLapeTree_ExprBase; virtual;
     function ParseTypeExpression(ReturnOn: EParserTokenSet = []; FirstNext: Boolean = True; DoFold: Boolean = True): TLapeTree_Base; virtual;
     function ParseStatement(FirstNext: Boolean = True; ExprEnd: EParserTokenSet = ParserToken_ExpressionEnd): TLapeTree_Base; virtual;
     function ParseStatementList: TLapeTree_StatementList; virtual;
@@ -492,6 +493,49 @@ begin
   Inc(FTypeID);
 end;
 
+function TLapeCompiler.GetObjectifyMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar;
+var
+  Method: TLapeTree_Method;
+  Invoke: TLapeTree_Invoke;
+  Assignment: TLapeTree_Operator;
+  Callback: TResVar;
+  i: Int32;
+begin
+  Result := nil;
+  if (AType = nil) or (AType.ClassType <> TLapeType_MethodOfObject) then
+    Exit;
+
+  IncStackInfo();
+
+  try
+    Result := addManagedDecl(AType.NewGlobalVar(EndJump)) as TLapeGlobalVar;
+
+    Method := TLapeTree_Method.Create(Result, FStackInfo, Self);
+    Method.Statements := TLapeTree_StatementList.Create(Method);
+
+    Callback := _ResVar.New(FStackInfo.addSelfVar(lptConstRef, getGlobalType('ConstPointer')));
+    Callback.VarType := addManagedType(TLapeType_Method.Create(AType));
+
+    Invoke := TLapeTree_Invoke.Create(TLapeTree_ResVar.Create(Callback.IncLock(), Self), Self);
+    for i := 0 to AType.Params.Count - 1 do
+      Invoke.addParam(TLapeTree_ResVar.Create(_ResVar.New(FStackInfo.addVar(AType.Params[i].ParType, AType.Params[i].VarType)), Self));
+
+    if (AType.Res <> nil) then
+    begin
+      Assignment := TLapeTree_Operator.Create(op_Assign, Self);
+      Assignment.Left := TLapeTree_ResVar.Create(_ResVar.New(FStackInfo.addVar(lptOut, AType.Res)), Self);
+      Assignment.Right := Invoke;
+
+      Method.Statements.addStatement(Assignment);
+    end else
+      Method.Statements.addStatement(Invoke);
+
+    addDelayedExpression(Method);
+  finally
+    DecStackInfo(True, False, Method = nil);
+  end;
+end;
+
 function TLapeCompiler.GetDisposeMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar;
 var
   Method: TLapeTree_Method;
@@ -746,6 +790,7 @@ begin
   addGlobalFunc('procedure UniqueString(var Str: UnicodeString); overload;', @_LapeUStr_Unique);
 
   addToString();
+  addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetObjectifyMethod).NewGlobalVar('_Objectify'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetDisposeMethod).NewGlobalVar('_Dispose'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetCopyMethod).NewGlobalVar('_Assign'));
 
@@ -923,6 +968,8 @@ var
         Result := (lcoCOperators in FOptions)
       else if (Def = 'hints') then
         Result := (lcoHints in FOptions)
+      else if (Def = 'autoobjectify') then
+        Result := (lcoAutoObjectify in FOptions)
       else
         Result := False;
     end;
@@ -1106,6 +1153,8 @@ begin
     setOption(lcoContinueCase)
   else if (Directive = 'coperators') then
     setOption(lcoCOperators)
+  else if (Directive = 'autoobjectify') then
+    setOption(lcoAutoObjectify)
   else
     Result := False;
 end;
@@ -2351,7 +2400,7 @@ begin
   end;
 end;
 
-function TLapeCompiler.ParseExpression(ReturnOn: EParserTokenSet = []; FirstNext: Boolean = True; DoFold: Boolean = True): TLapeTree_ExprBase;
+function TLapeCompiler.ParseExpression(ReturnOn: EParserTokenSet; FirstNext: Boolean; DoFold: Boolean; IsInternalMethod: Boolean): TLapeTree_ExprBase;
 const
   ParenthesisOpen = Pointer(-1);
 var
@@ -2677,6 +2726,13 @@ begin
         tk_typ_Char,
         tk_typ_String,
         tk_typ_HereString: ParseAndPushString();
+        tk_kw_Type:
+          begin
+            if not IsInternalMethod then
+              Break;
+
+            PushVarStack(TLapeTree_VarType.Create(parseType(nil), Self));
+          end;
 
         tk_Identifier:
           begin
@@ -2724,11 +2780,11 @@ begin
               end;
               if (Next() <> tk_sym_ParenthesisClose) then
               begin
-                Method.addParam(EnsureExpression(ParseExpression([tk_sym_ParenthesisClose, tk_sym_Comma], False)));
+                Method.addParam(EnsureExpression(ParseExpression([tk_sym_ParenthesisClose, tk_sym_Comma], False, True, Method is TLapeTree_InternalMethod)));
                 while True do
                   case Tokenizer.Tok of
                     tk_sym_ParenthesisClose: Break;
-                    tk_sym_Comma: Method.addParam(EnsureExpression(ParseExpression([tk_sym_ParenthesisClose, tk_sym_Comma])));
+                    tk_sym_Comma: Method.addParam(EnsureExpression(ParseExpression([tk_sym_ParenthesisClose, tk_sym_Comma], True, True, Method is TLapeTree_InternalMethod)));
                     else
                       LapeException(lpeClosingParenthesisExpected, Tokenizer.DocPos);
                   end;
@@ -2941,6 +2997,9 @@ begin
     while (not (Tokenizer.Tok in [tk_Null, tk_kw_Else, tk_kw_End])) do
     begin
       Expr := ParseTypeExpression([tk_sym_Comma, tk_sym_Colon], False);
+      if (Expr = nil) then
+        LapeException(lpeInvalidCaseStatement, Tokenizer.DocPos);
+
       Field := TLapeTree_MultiIf.Create(nil, Self, @Expr._DocPos);
       repeat
         Field.addValue(Expr);
@@ -3189,7 +3248,7 @@ begin
 
   FIncludes := TStringList.Create();
   FIncludes.Duplicates := dupIgnore;
-  FIncludes.CaseSensitive := LapeSystemCaseSensitive;
+  FIncludes.CaseSensitive := {$IFDEF DARWIN}False{$ELSE}LapeSystemCaseSensitive{$ENDIF};
   FDefines := TLapeDefineMap.Create('', dupAccept, False);
   FBaseDefines := TLapeDefineMap.Create('', dupAccept, False);
   FConditionalStack := TLapeConditionalStack.Create(0);
@@ -3239,6 +3298,9 @@ begin
   FInternalMethodMap['goto'] := TLapeTree_InternalMethod_GoTo;
 
   FInternalMethodMap['raise'] := TLapeTree_InternalMethod_Raise;
+
+  FInternalMethodMap['Objectify'] := TLapeTree_InternalMethod_Objectify;
+  FInternalMethodMap['IsEnumGap'] := TLapeTree_InternalMethod_IsEnumGap;
 
   setTokenizer(ATokenizer);
   Reset();
