@@ -863,7 +863,7 @@ begin
     Method := TLapeType_OverloadedMethod(Method.VarType).getMethod(getTypeArray(AParams), AResult);
 
   if (Method = nil) then
-    Method := Compiler.addManagedVar(Compiler.getBaseType(ltPointer).NewGlobalVarP()) as TLapeGlobalVar;
+    Method := Compiler.getConstant('nil', ltPointer);
 
   Result := _ResVar.New(Method);
   Result.VarType := Compiler.getBaseType(ltPointer);
@@ -1579,7 +1579,7 @@ begin
       else
         LapeException(lpeInvalidCast, DocPos);
 
-      Result := FCompiler.addManagedVar(Result) as TLapeGlobalVar;
+      Result := FCompiler.addManagedDecl(Result) as TLapeGlobalVar;
       Result.isConstant := True;
 
       FRes := Result;
@@ -1790,67 +1790,66 @@ end;
 
 function TLapeTree_Invoke.getRealIdent(ExpectType: TLapeType): TLapeTree_ExprBase;
 
-  function CastOpenArrays(Methods: TLapeDeclarationList): Int32;
+  function CastOpenArrays(Typ: TLapeType_OverloadedMethod): Int32;
+  var
+    ParamTypes: TLapeTypeArray;
+    ParamIndices: TIntegerArray;
 
-    function canCast(Method: TLapeType_Method; Strict: Boolean): Boolean;
+    function Cast(Strict: Boolean): Integer;
     var
-      i: Int32;
+      Method: TLapeType_Method;
+      Param: Int32;
+      i, j: Int32;
+      Casted: Boolean;
     begin
-      Result := False;
-      if (FParams.Count > Method.Params.Count) then
-        Exit;
+      Result := -1;
 
-      for i := 0 to Method.Params.Count - 1 do
+      for i := 0 to Typ.ManagedDeclarations.Count - 1 do
       begin
-        if (i >= FParams.Count) then
+        Method := TLapeGlobalVar(Typ.ManagedDeclarations[i]).VarType as TLapeType_Method;
+        if (Length(ParamTypes) > Method.Params.Count) then
+          Continue;
+
+        for j := 0 to High(ParamIndices) do
         begin
-          if (Method.Params[i].Default <> nil) then
-            Continue
-          else
-          begin
-            Result := False;
-            Exit;
-          end;
+          Param := ParamIndices[j];
+
+          Casted := TLapeTree_OpenArray(FParams[Param]).canCastTo(Method.Params[Param].VarType, Strict);
+          if not Casted then
+            Break;
+
+          ParamTypes[Param] := Method.Params[Param].VarType;
         end;
 
-        if FParams[i] is TLapeTree_OpenArray then
+        if Casted then
         begin
-          Result := TLapeTree_OpenArray(FParams[i]).canCastTo(Method.Params[i].VarType, Strict);
-          if (not Result) then
-            Exit;
+          Result := Typ.getMethodIndex(ParamTypes, ExpectType);
+          if (Result >= 0) then
+            Break;
         end;
       end;
     end;
 
   var
     i: Int32;
-    Method: TLapeType_Method;
   begin
     Result := -1;
 
-    for i := 0 to Methods.Count - 1 do
-      if canCast(TLapeGlobalVar(Methods[i]).VarType as TLapeType_Method, True) then
+    ParamIndices := nil;
+    for i := 0 to FParams.Count - 1 do
+      if FParams[i] is TLapeTree_OpenArray then
       begin
-        Result := i;
-        Break;
+        SetLength(ParamIndices, Length(ParamIndices) + 1);
+        ParamIndices[High(ParamIndices)] := i;
       end;
 
-    if (Result = -1) then
+    if Length(ParamIndices) > 0 then
     begin
-      for i := 0 to Methods.Count - 1 do
-        if canCast(TLapeGlobalVar(Methods[i]).VarType as TLapeType_Method, False) then
-        begin
-          Result := i;
-          Break;
-        end;
-    end;
+      ParamTypes := getParamTypes();
 
-    if (Result > -1) then
-    begin
-      Method := TLapeGlobalVar(Methods[i]).VarType as TLapeType_Method;
-      for i := 0 to FParams.Count - 1 do
-        if FParams[i] is TLapeTree_OpenArray then
-          FParams[i] := FParams[i].setExpectedType(Method.Params[i].VarType) as TLapeTree_ExprBase;
+      Result := Cast(True);
+      if Result = -1 then
+        Result := Cast(False);
     end;
   end;
 
@@ -1867,8 +1866,8 @@ begin
       with TLapeType_OverloadedMethod(Typ) do
       begin
         MethodIndex := getMethodIndex(getParamTypes(), ExpectType);
-        if MethodIndex = -1 then
-          MethodIndex := CastOpenArrays(ManagedDeclarations);
+        if (MethodIndex = -1) then
+          MethodIndex := CastOpenArrays(TLapeType_OverloadedMethod(Typ));
       end;
 
       if (MethodIndex >= 0) then
@@ -2086,9 +2085,9 @@ var
          ((VarType.Equals(Result.VarType) or (VarType.Size = Result.VarType.Size)) and
          ((not (VarType.BaseType in LapeRefTypes)) or (not VarType.CompatibleWith(Result.VarType))))
       then
-        Result := TLapeGlobalVar(FCompiler.addManagedVar(VarType.NewGlobalVarP(Result.Ptr), Result.Name <> ''))
+        Result := TLapeGlobalVar(FCompiler.addManagedDecl(VarType.NewGlobalVarP(Result.Ptr)))
       else if VarType.CompatibleWith(Result.VarType) then
-        Result := TLapeGlobalVar(FCompiler.addManagedVar(VarType.EvalConst(op_Assign, VarType.NewGlobalVarP(), Result, [])))
+        Result := TLapeGlobalVar(FCompiler.addManagedDecl(VarType.EvalConst(op_Assign, VarType.NewGlobalVarP(), Result, [])))
       else if VarType.IsOrdinal() and Result.VarType.IsOrdinal() then
       try
         tmpRes := Result;
@@ -2101,7 +2100,7 @@ var
         Result := Result.VarType.EvalConst(op_Assign, Result, tmpRes, []);
         Result.VarType := VarType;
 
-        Result := TLapeGlobalVar(FCompiler.addManagedVar(Result));
+        Result := TLapeGlobalVar(FCompiler.addManagedDecl(Result));
       finally
         tmpRes.VarType := tmpTyp;
       end
@@ -2167,7 +2166,7 @@ var
         if (Params[i].VarType <> nil) and (not Params[i].VarType.Equals(Par.VarType)) then
           if Params[i].VarType.CompatibleWith(Par.VarType) then
           try
-            Par := TLapeGlobalVar(FCompiler.addManagedVar(Params[i].VarType.EvalConst(op_Assign, Params[i].VarType.NewGlobalVarP(), Par, [])));
+            Par := TLapeGlobalVar(FCompiler.addManagedDecl(Params[i].VarType.EvalConst(op_Assign, Params[i].VarType.NewGlobalVarP(), Par, [])));
           except on E: lpException do
             LapeException(lpString(E.Message), FParams[i].DocPos);
           end
@@ -2180,7 +2179,7 @@ var
 
       Result := Res.NewGlobalVarP();
       TLapeImportedFunc(IdentVar.Ptr^)(@ParamVars[0], Result.Ptr);
-      Result := TLapeGlobalVar(FCompiler.addManagedVar(Result));
+      Result := TLapeGlobalVar(FCompiler.addManagedDecl(Result));
 
       for i := 1 to ImplicitParams do
         FParams.Delete(0);
@@ -3288,7 +3287,7 @@ begin
     if (ParamType = nil) then
       LapeException(lpeInvalidEvaluation, DocPos);
 
-    FRes := FCompiler.getConstant(ParamType.Size, ltSizeInt, False, True);
+    FRes := FCompiler.getConstant(ParamType.Size, ltSizeInt);
   end;
   Result := inherited;
 end;
@@ -3573,11 +3572,11 @@ begin
     case ParamType.BaseType of
       ltStaticArray:
         with TLapeType_StaticArray(ParamType) do
-          FRes := FCompiler.getConstant(Range.Hi - Range.Lo + 1, ltSizeInt, False, True);
+          FRes := FCompiler.getConstant(Range.Hi - Range.Lo + 1, ltSizeInt);
 
       ltSmallEnum, ltLargeEnum:
         with TLapeType_Enum(ParamType) do
-          FRes := FCompiler.getConstant(MemberMap.Count - GapCount, ltSizeInt, False, True);
+          FRes := FCompiler.getConstant(MemberMap.Count - GapCount, ltSizeInt);
     end;
   end;
 
@@ -4978,7 +4977,7 @@ begin
         Free();
       end;
 
-      FRes := FCompiler.addManagedVar(FRes) as TLapeGlobalVar;
+      FRes := FCompiler.addManagedDecl(FRes) as TLapeGlobalVar;
     except on E: lpException do
       LapeException(lpString(E.Message), DocPos);
     end;
@@ -5160,7 +5159,7 @@ begin
 
   FGlobalVar := AGlobalVar;
   if (ACompiler <> nil) and (FGlobalVar <> nil) and (FGlobalVar.DeclarationList = nil) then
-    FGlobalVar := TLapeGlobalVar(FCompiler.addManagedVar(FGlobalVar));
+    FGlobalVar := TLapeGlobalVar(FCompiler.addManagedDecl(FGlobalVar));
 
   if (FGlobalVar = nil) then
     FConstant := bFalse
@@ -5185,13 +5184,13 @@ end;
 constructor TLapeTree_GlobalVar.Create(Ident: lpString; BaseType: ELapeBaseType; ACompiler: TLapeCompilerBase; ADocPos: PDocPos = nil);
 begin
   Assert(ACompiler <> nil);
-  Create(ACompiler.getConstant(Ident, BaseType, False, True), ACompiler, ADocPos);
+  Create(ACompiler.getConstant(Ident, BaseType), ACompiler, ADocPos);
 end;
 
 constructor TLapeTree_GlobalVar.Create(Ident: lpString; BaseType: ELapeBaseType; ASource: TLapeTree_Base);
 begin
   Assert((ASource <> nil) and (ASource.Compiler <> nil));
-  Create(ASource.Compiler.getConstant(Ident, BaseType, False, True), ASource);
+  Create(ASource.Compiler.getConstant(Ident, BaseType), ASource);
 end;
 
 function TLapeTree_GlobalVar.Compile(var Offset: Integer): TResVar;
