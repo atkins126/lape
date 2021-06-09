@@ -1,6 +1,6 @@
 {
   Author: Niels A.D
-  Project: Lape (http://code.google.com/p/la-pe/)
+  Project: Lape (https://github.com/nielsAD/lape)
   License: GNU Lesser GPL (http://www.gnu.org/licenses/lgpl.html)
 
   General basetypes and objects.
@@ -90,6 +90,7 @@ type
     VarRecs: TVarRecArray;
   end;
 
+  PStringArray = ^TStringArray;
   TStringArray = array of lpString;
   TByteArray = array of Byte;
   TIntegerArray = array of Integer;

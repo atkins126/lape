@@ -1,6 +1,6 @@
 {
   Author: Niels A.D
-  Project: Lape (http://code.google.com/p/la-pe/)
+  Project: Lape (https://github.com/nielsAD/lape)
   License: GNU Lesser GPL (http://www.gnu.org/licenses/lgpl.html)
 
   Lape exceptions.
@@ -56,6 +56,7 @@ const
   lpeExceptionAt = '%s at line %d, column %d';
   lpeExceptionIn = '%s in file "%s"';
   lpeExpected = '%s expected';
+  lpeExpectedArray = 'Array expected';
   lpeExpectedNormalMethod = 'Normal method expected';
   lpeExpectedOther = 'Found unexpected token "%s", expected "%s"';
   lpeExpressionExpected = 'Expression expected';
@@ -70,6 +71,7 @@ const
   lpeInvalidCast = 'Invalid cast';
   lpeInvalidCaseStatement = 'Invalid case statement';
   lpeInvalidCondition = 'Invalid condition';
+  lpeInvalidCompareMethod = 'Invalid compare method';
   lpeInvalidEvaluation = 'Invalid evaluation';
   lpeInvalidForward = 'Forwarded declaration "%s" not resolved';
   lpeInvalidLabel = 'Invalid label';
