@@ -31,6 +31,7 @@ type
     lcoHints,                          // {$H} {$HINTS}
     lcoCOperators,                     //      {$COPERATORS}
     lcoAutoObjectify,                  //      {$AUTOOBJECTIFY}
+    lcoDuplicateLocalNameHints,        //
     lcoInitExternalResult              // Ensure empty result for external calls (useful for ffi)
   );
   ECompilerOptionsSet = set of ECompilerOption;
@@ -69,22 +70,23 @@ type
     function getReadable: Boolean;
     function getWriteable: Boolean;
     function getConstant: Boolean;
+    function getLock: Integer;
   public
     VarType: TLapeType;
     VarPos: TVarPos;
 
     class function New(AVar: TLapeVar): TResVar; {$IFNDEF FPC}static;{$ENDIF}
-    function HasType: Boolean; {$IFDEF Lape_Inline}inline;{$ENDIF}
+    function HasType: Boolean;
 
-    procedure Spill(Unlock: Integer = 0); {$IFDEF Lape_Inline}inline;{$ENDIF}
-    function IncLock(Count: Integer = 1): TResVar; {$IFDEF Lape_Inline}inline;{$ENDIF}
-    function DecLock(Count: Integer = 1): TResVar; {$IFDEF Lape_Inline}inline;{$ENDIF}
+    procedure Spill(Unlock: Integer = 0);
+    function IncLock(Count: Integer = 1): TResVar;
+    function DecLock(Count: Integer = 1): TResVar;
 
-    function InScope(AStack: TLapeStackInfo; Pos: PDocPos = nil): TResVar; {$IFDEF Lape_Inline}inline;{$ENDIF}
+    function InScope(AStack: TLapeStackInfo; Pos: PDocPos = nil): TResVar;
 
-    procedure IncOffset(Offset: Integer); {$IFDEF Lape_Inline}inline;{$ENDIF}
-    procedure DecOffset(Offset: Integer); {$IFDEF Lape_Inline}inline;{$ENDIF}
-    procedure setOffset(Offset: Integer); {$IFDEF Lape_Inline}inline;{$ENDIF}
+    procedure IncOffset(Offset: Integer);
+    procedure DecOffset(Offset: Integer);
+    procedure setOffset(Offset: Integer);
 
     procedure setReadable(AReadable: Boolean; ChangeStack: Boolean); overload;
     procedure setReadable(AReadable: Boolean); overload;
@@ -99,6 +101,7 @@ type
     property Readable: Boolean read getReadable write setReadable;
     property Writeable: Boolean read getWriteable write setWriteable;
     property isConstant: Boolean read getConstant write setConstant;
+    property Lock: Integer read getLock;
   end;
 
   ELapeParameterType = (lptNormal, lptConst, lptConstRef, lptVar, lptOut);
@@ -368,7 +371,7 @@ type
     Res: TLapeType;
     IsOperator: Boolean;
     HintDirectives: ELapeHintDirectives;
-    DeprecatedHint: String;
+    DeprecatedHint: lpString;
 
     constructor Create(ACompiler: TLapeCompilerBase; AParams: TLapeParameterList; ARes: TLapeType = nil; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; overload; virtual;
     constructor Create(ACompiler: TLapeCompilerBase; AParams: array of TLapeType; AParTypes: array of ELapeParameterType; AParDefaults: array of TLapeGlobalVar; ARes: TLapeType = nil; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; overload; virtual;
@@ -609,7 +612,7 @@ type
   end;
 
   TLapeHint = procedure(Sender: TLapeCompilerBase; Msg: lpString) of object;
-  TLapeBaseTypesDictionary = specialize TLapeUniqueStringDictionary<TLapeType>;
+  TLapeBaseTypesDictionary = {$IFDEF FPC}specialize{$ENDIF}TLapeUniqueStringDictionary<TLapeType>;
 
   TLapeCompilerBase = class(TLapeBaseDeclClass)
   protected
@@ -696,21 +699,20 @@ type
     property GlobalDeclarations: TLapeDeclarationList read FGlobalDeclarations;
     property ManagedDeclarations: TLapeDeclarationList read FManagedDeclarations;
     property Globals[AName: lpString]: TLapeGlobalVar read getGlobalVar; default;
-  published
     property Emitter: TLapeCodeEmitter read FEmitter write setEmitter;
     property Options: ECompilerOptionsSet read FOptions write setOptions default Lape_OptionsDef;
     property Options_PackRecords: UInt8 read FBaseOptions_PackRecords write setPackRecords default Lape_PackRecordsDef;
     property OnHint: TLapeHint read FOnHint write FOnHint;
   end;
 
-function ResolveCompoundOp(op:EOperator; typ:TLapeType): EOperator; {$IFDEF Lape_Inline}inline;{$ENDIF}
+function ResolveCompoundOp(op:EOperator; typ:TLapeType): EOperator;
 function getTypeArray(Arr: array of TLapeType): TLapeTypeArray;
 procedure ClearBaseTypes(var Arr: TLapeBaseTypes; DoFree: Boolean);
 procedure LoadBaseTypes(var Arr: TLapeBaseTypes; Compiler: TLapeCompilerBase);
 
-function MethodOfObject(VarType: TLapeType): Boolean; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function ValidFieldName(Field: TLapeGlobalVar): Boolean; overload; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function ValidFieldName(Field: TResVar): Boolean; overload; {$IFDEF Lape_Inline}inline;{$ENDIF}
+function MethodOfObject(VarType: TLapeType): Boolean;
+function ValidFieldName(Field: TLapeGlobalVar): Boolean; overload;
+function ValidFieldName(Field: TResVar): Boolean; overload;
 
 const
   BigLock = 256;
@@ -771,7 +773,7 @@ procedure ClearBaseTypes(var Arr: TLapeBaseTypes; DoFree: Boolean);
 var
   BaseType: ELapeBaseType;
 begin
-  for BaseType := Low(ELapeBaseType) to High(ELapeBaseType) do
+  for BaseType in LapeBaseTypes do
     if (Arr[BaseType] <> nil) then
       if DoFree then
         FreeAndNil(Arr[BaseType])
@@ -846,6 +848,13 @@ end;
 function TResVar.getConstant: Boolean;
 begin
   Result := Readable and (not Writeable);
+end;
+
+function TResVar.getLock: Integer;
+begin
+  Result := 0;
+  if (VarPos.MemPos = mpVar) and (VarPos.StackVar <> nil) and (VarPos.StackVar is TLapeStackTempVar) then
+    Result := TLapeStackTempVar(VarPos.StackVar).FLock;
 end;
 
 class function TResVar.New(AVar: TLapeVar): TResVar;
@@ -3987,8 +3996,8 @@ begin
 
   LoadBaseTypes(FBaseTypes, Self);
 
-  FBaseTypesDictionary := TLapeBaseTypesDictionary.Create(nil, 256);
-  for BaseType in ELapeBaseType do
+  FBaseTypesDictionary := TLapeBaseTypesDictionary.Create(nil);
+  for BaseType in LapeBaseTypes do
     if (FBaseTypes[BaseType] <> nil) then
       FBaseTypesDictionary[FBaseTypes[BaseType].Name] := FBaseTypes[BaseType];
 
@@ -3996,7 +4005,7 @@ begin
 
   FGlobalDeclarations := TLapeDeclarationList.Create(nil);
   FManagedDeclarations := TLapeDeclarationList.Create(nil);
-  for BaseType in ELapeBaseType do
+  for BaseType in LapeBaseTypes do
     FCachedDeclarations[BaseType] := TLapeVarMap.Create(nil, dupIgnore, True, '', True);
 end;
 
@@ -4010,7 +4019,7 @@ begin
   FreeAndNil(FBaseTypesDictionary);
   FreeAndNil(FGlobalDeclarations);
   FreeAndNil(FManagedDeclarations);
-  for BaseType in ELapeBaseType do
+  for BaseType in LapeBaseTypes do
     FreeAndNil(FCachedDeclarations[BaseType]);
 
   ClearBaseTypes(FBaseTypes, True);
@@ -4027,7 +4036,7 @@ begin
   FManagedDeclarations.Delete(TLapeVar, True);
   FGlobalDeclarations.Clear();
   FManagedDeclarations.Clear();
-  for BaseType in ELapeBaseType do
+  for BaseType in LapeBaseTypes do
     FCachedDeclarations[BaseType].Clear();
   Reset();
 end;

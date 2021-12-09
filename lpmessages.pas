@@ -59,6 +59,7 @@ const
   lpeExceptionInFile = '%s in file "%s"';
   lpeExpected = '%s expected';
   lpeExpectedArray = 'Array expected';
+  lpeExpectedArrayOfType = 'Array expected of type "%s"';
   lpeExpectedNormalMethod = 'Normal method expected';
   lpeExpectedOther = 'Found unexpected token "%s", expected "%s"';
   lpeExpressionExpected = 'Expression expected';
@@ -109,7 +110,8 @@ const
   lpeStatementNotAllowed = 'Statement not allowed here';
   lpeTooMuchParameters = 'Too many parameters found';
   lpeTypeExpected = 'Type expected';
-  lpeUnexpectedToken = 'Found unexpected token "%s"';
+  lpeUnClosedComment = 'Unclosed comment';
+  lpeUnExpectedToken = 'Found unexpected token "%s"';
   lpeUnknownDeclaration = 'Unknown declaration "%s"';
   lpeUnknownDeclarationOpenArray = 'Unknown declaration in open array (index: %d)';
   lpeUnknownDirective = 'Unknown compiler directive';
@@ -128,6 +130,7 @@ const
   lphDeprecatedMethodHint = 'Method "%s" is deprecated "%s"';
   lphUnImplementedMethod = 'Method "%s" is not implemented';
   lphExperimentalMethod = 'Method "%s" is experimental';
+  lphDuplicateLocalName = 'Local declaration "%s" exists globally';
 
 procedure LapeException(Msg: lpString); overload;
 procedure LapeException(Msg: lpString; DocPos: TDocPos); overload;

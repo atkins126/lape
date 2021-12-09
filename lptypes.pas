@@ -1,4 +1,4 @@
-{
+﻿{
   Author: Niels A.D
   Project: Lape (https://github.com/nielsAD/lape)
   License: GNU Lesser GPL (http://www.gnu.org/licenses/lgpl.html)
@@ -19,15 +19,6 @@ const
   LapeSystemCaseSensitive = {$IFDEF Unix}True{$ELSE}False{$ENDIF};
 
 type
-  UInt8 = Byte;
-  Int8 = ShortInt;
-  UInt16 = Word;
-  Int16 = SmallInt;
-  UInt32 = LongWord;
-  Int32 = LongInt;
-  //UInt64 = QWord;    Already defined
-  //Int64 = Int64;     Already defined
-
   PUInt8 = ^UInt8;
   PInt8 = ^Int8;
   PUInt16 = ^UInt16;
@@ -35,7 +26,7 @@ type
   PUInt32 = ^UInt32;
   PInt32 = ^Int32;
   PUInt64 = ^UInt64;
-  //PInt64 = ^Int64;   Already defined
+  PInt64 = ^Int64;
 
   PByteBool = ^ByteBool;
 
@@ -94,6 +85,8 @@ type
   TStringArray = array of lpString;
   TByteArray = array of Byte;
   TIntegerArray = array of Integer;
+  TInt64Array = array of Int64;
+  TExtendedArray = array of Extended;
   TInitBool = (bUnknown, bFalse, bTrue);
 
   TCodeArray = TByteArray;
@@ -409,23 +402,30 @@ type
     property Sorted: Boolean read getSorted write setSorted;
   end;
 
-  // Must be large enough not to have multiple values fall into the same bucket
+  // "Perfect Hashing"
   {$IFDEF FPC}generic{$ENDIF} TLapeUniqueStringDictionary<_T> = class(TLapeBaseClass)
   protected type
-    TBucket = record Name: lpString; Value: _T; end;
-    TArr = array of TBucket;
+    TBucket = record Key: lpString; Value: _T; end;
+    TBuckets = array of TBucket;
   protected
-    FArr: TArr;
-    FSize: Integer;
+    FBuckets: TBuckets;
+    FSize: UInt32;
+    FTag: UInt32;
     FMinLength: Integer;
     FMaxLength: Integer;
+    FCount: Integer;
+    FItems: TBuckets;
+
+    function Hash(const S: PChar; const Len: Integer): UInt32;
+
+    procedure Build;
 
     procedure setValue(Key: lpString; Value: _T);
     function getValue(Key: lpString): _T;
   public
     InvalidVal: _T;
 
-    constructor Create(InvalidValue: _T; Size: Integer); reintroduce; virtual;
+    constructor Create(InvalidValue: _T; Size: Integer = 1024); reintroduce; virtual;
 
     property Value[Key: lpString]: _T read getValue write setValue; default;
   end;
@@ -462,6 +462,42 @@ type
     procedure Notify(Sender: _T); virtual;
   end;
 
+  {$IFDEF FPC}generic{$ENDIF} TLapeDictionary<_T> = class(TLapeBaseClass)
+  public
+  type
+    THashBucketItems = array of record
+      Item: _T;
+      Hash: UInt32;
+    end;
+
+    PHashBucket = ^THashBucket;
+    THashBucket = record
+      Count: Integer;
+      Items: THashBucketItems;
+    end;
+    THashBuckets = array of THashBucket;
+
+    TItemArray = array of _T;
+  protected
+    FInitialSize: Integer;
+    FGrowth: Integer;
+    FBuckets: THashBuckets;
+    FCount: Integer;
+    FSize: Integer;
+
+    procedure Grow;
+  public
+    constructor Create(InitialSize: Integer = 32; Growth: Integer = 4); reintroduce;
+
+    function GetBucket(const Hash: UInt32): PHashBucket; inline;
+
+    function Remove(const Hash: UInt32; const Item: _T): Boolean;
+    procedure Add(const Hash: UInt32; const Item: _T; const CanGrow: Boolean = True);
+    procedure Clear;
+
+    function ExportToArray: TItemArray;
+  end;
+
   TLapeDeclaration = class;
   TLapeDeclarationClass = class of TLapeDeclaration;
   TLapeDeclArray = array of TLapeDeclaration;
@@ -477,8 +513,8 @@ type
     procedure Add(Decl: TLapeDeclaration); virtual; abstract;
     function Delete(Decl: TLapeDeclaration): Boolean; virtual; abstract;
 
-    function Get(Name: lpString; out Decl: TLapeDeclaration): Boolean; virtual; abstract;
-    function Get(Name: lpString; AClass: TLapeDeclarationClass; out Decl: TLapeDeclaration): Boolean; virtual; abstract;
+    function Get(Name: lpString; out Decl: TLapeDeclaration): Boolean; overload; virtual; abstract;
+    function Get(Name: lpString; AClass: TLapeDeclarationClass; out Decl: TLapeDeclaration): Boolean; overload; virtual; abstract;
     function GetByClass(AClass: TLapeDeclarationClass): TLapeDeclArray; virtual; abstract;
 
     function IndexOf(Decl: TLapeDeclaration): Integer; virtual; abstract;
@@ -491,27 +527,20 @@ type
   end;
 
   TLapeDeclCollection_Dictionary = class(TLapeDeclCollection)
-  protected const
-    MIN_SIZE        = 16; // Must be power of two !!
-    GROWTH_STRATEGY = 8;  // ..
-  protected type
-    THashBucket  = {$IFDEF FPC}specialize{$ENDIF} TLapeList<TLapeDeclaration>;
-    THashBuckets = array of THashBucket;
   protected
-    FBuckets: THashBuckets;
-    FSize: UInt32;
-    FCount: Integer;
-    FNamedCount: Integer;
+  type
+    TDictionary = {$IFDEF FPC}specialize{$ENDIF} TLapeDictionary<TLapeDeclaration>;
+    TList = {$IFDEF FPC}specialize{$ENDIF} TLapeList<TLapeDeclaration>;
+  protected
+    FDictionary: TDictionary;
+    FUnnamedBucket: TList;
 
     procedure NameChanged(Decl: TLapeDeclaration); virtual;
-
-    function _Delete(Hash: UInt32; Decl: TLapeDeclaration): Boolean; virtual;
-    procedure _Add(Hash: UInt32; Decl: TLapeDeclaration); virtual;
-    procedure _Grow; virtual;
 
     function getItem(Index: Integer): TLapeDeclaration; override;
     function getCount: Integer; override;
   public
+    constructor Create; override;
     destructor Destroy; override;
 
     procedure Clear; override;
@@ -598,7 +627,7 @@ type
 
   TLapeDeclaration = class(TLapeBaseDeclClass)
   protected type
-    TNameChangeNotifier = specialize TLapeNotifierOfObject<TLapeDeclaration>;
+    TNameChangeNotifier = {$IFDEF FPC}specialize{$ENDIF} TLapeNotifierOfObject<TLapeDeclaration>;
   protected
     FList: TLapeDeclarationList;
 
@@ -648,7 +677,8 @@ const
   op_Label = op_Addr;
 
   {$IFNDEF FPC}
-  LineEnding = #13#10;
+  LineEnding = {$IFDEF MSWINDOWS}#13#10{$ELSE}#10{$ENDIF};
+  DirectorySeparator = PathDelim;
   {$ENDIF}
 
   {$IFDEF Lape_Unicode}
@@ -698,6 +728,7 @@ const
     {$MESSAGE Fatal 'TCodePos should be <= Pointer for universal methods'}
   {$IFEND}
 
+  LapeBaseTypes = [Low(ELapeBaseType)..High(ELapeBaseType)];
   LapeIntegerTypes = [Low(LapeIntegerTypeRange)..High(LapeIntegerTypeRange)];
   LapeSignedIntegerTypes = [ltInt8, ltInt16, ltInt32, ltInt64];
   LapeUnsignedIntegerTypes = [ltUInt8, ltUInt16, ltUInt32, ltUInt64];
@@ -761,11 +792,9 @@ var
     @highUInt8, @highInt8, @highUInt16, @highInt16, @highUInt32, @highInt32, @highUInt64, @highInt64
   );
 
-const
-  Lape_EmptyHash: UInt32 = $811C9DC5;
-
 function LapeCase(const Str: lpString): lpString; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function LapeHash(const Str: lpString): UInt32; {$IFDEF Lape_Inline}inline;{$ENDIF}
+function LapeHash(Data: Pointer; Len: UInt32; const Seed: UInt32 = 0): UInt32; overload;
+function LapeHash(const Str: lpString): UInt32; overload; {$IFDEF Lape_Inline}inline;{$ENDIF}
 function LapeTypeToString(Token: ELapeBaseType): lpString; {$IFDEF Lape_Inline}inline;{$ENDIF}
 function LapeOperatorToString(Token: EOperator): lpString; {$IFDEF Lape_Inline}inline;{$ENDIF}
 
@@ -784,18 +813,23 @@ function VariantArrToConstArr(v: array of Variant): TVarRecList;
 procedure Swap(var A, B: Pointer); overload; {$IFDEF Lape_Inline}inline;{$ENDIF}
 procedure Swap(var A, B: Boolean); overload; {$IFDEF Lape_Inline}inline;{$ENDIF}
 
-function _Compare8(Arr: PUInt8; Item: UInt8; Lo, Hi: Integer): Integer;    {$IFDEF Lape_Inline}inline;{$ENDIF}
-function _Compare16(Arr: PUInt16; Item: UInt16; Lo, Hi: Integer): Integer; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function _Compare32(Arr: PUInt32; Item: UInt32; Lo, Hi: Integer): Integer; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function _Compare64(Arr: PUInt64; Item: UInt64; Lo, Hi: Integer): Integer; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function _BSearch8(Arr: PUInt8; Item: UInt8; Lo, Hi: Integer): Integer;    {$IFDEF Lape_Inline}inline;{$ENDIF}
-function _BSearch16(Arr: PUInt16; Item: UInt16; Lo, Hi: Integer): Integer; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function _BSearch32(Arr: PUInt32; Item: UInt32; Lo, Hi: Integer): Integer; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function _BSearch64(Arr: PUInt64; Item: UInt64; Lo, Hi: Integer): Integer; {$IFDEF Lape_Inline}inline;{$ENDIF}
+function _BCompare(Arr: PUInt8; const Item: PUInt8; const Size: Integer; const Lo, Hi: Integer): Integer; {$IFDEF Lape_Inline}inline;{$ENDIF}
+
+function _BSearch8(Arr: PUInt8; Item: UInt8; Lo, Hi: Integer): Integer;
+function _BSearch16(Arr: PUInt16; Item: UInt16; Lo, Hi: Integer): Integer;
+function _BSearch32(Arr: PUInt32; Item: UInt32; Lo, Hi: Integer): Integer;
+function _BSearch64(Arr: PUInt64; Item: UInt64; Lo, Hi: Integer): Integer;
+
 procedure _Insert8(Arr: PUInt8; var Index: Integer);
 procedure _Insert16(Arr: PUInt16; var Index: Integer);
 procedure _Insert32(Arr: PUInt32; var Index: Integer);
 procedure _Insert64(Arr: PUInt64; var Index: Integer);
+
+procedure _Sort(const Arr: PByte; const ElSize: SizeInt; var Weights: TIntegerArray; const SortUp: Boolean); overload;
+procedure _Sort(const Arr: PByte; const ElSize: SizeInt; var Weights: TInt64Array; const SortUp: Boolean); overload;
+procedure _Sort(const Arr: PByte; const ElSize: SizeInt; var Weights: TExtendedArray; const SortUp: Boolean); overload;
+
+procedure _Reverse(const Arr: PByte; const ElSize: SizeInt; Len: SizeInt);
 
 {$IFDEF Lape_TrackObjects}
 var
@@ -819,24 +853,47 @@ begin
   {$ENDIF}
 end;
 
-// Fowler–Noll–Vo + extra shuffle
-function LapeHash(const Str: lpString): UInt32;
+//MurMurHas2 by Tommi Prami & optimizations by Patrick van Logchem
+function LapeHash(Data: Pointer; Len: UInt32; const Seed: UInt32 = 0): UInt32;
+const
+  cM: UInt32 = $5BD1E995;
+  cR: UInt32 = 24;
 var
-  i, Len: UInt32;
+  i, k: UInt32;
 begin
   {$UNDEF REDO_Q}{$IFOPT Q+}{$Q-}{$DEFINE REDO_Q}{$ENDIF}
   {$UNDEF REDO_R}{$IFOPT R+}{$R-}{$DEFINE REDO_R}{$ENDIF}
-  Result := Lape_EmptyHash;
+  Result := Seed xor Len;
+  for i := 1 to Len div SizeOf(UInt32) do
+  begin
+    k := PUInt32(Data)^ * cM;
+    Result := (Result * cM) xor ((k xor (k shr cR)) * cM);
+    Inc(PtrUInt(Data), SizeOf(UInt32));
+  end;
 
-  Len := Length(Str);
+  Len := Len and 3;
   if (Len > 0) then
   begin
-    for i := 1 to Len do
-      Result := (Result xor Ord(Str[i])) * $1000193;
-    Result := (Result xor Len) * $5BD1E995; // Extra shuffle
+    if (Len >= SizeOf(UInt16)) then
+    begin
+      k := PUInt16(Data)^;
+      if (Len > SizeOf(UInt16)) then
+        k := k + (UInt32(PUInt8(PtrUInt(Data) + SizeOf(UInt16))^) shl 16);
+    end
+    else
+      k := PUInt8(Data)^;
+    Result := (Result xor k) * cM;
   end;
+
+  Result := (Result xor (Result shr 13)) * cM;
+  Result := (Result xor (Result shr 15));
   {$IFDEF REDO_Q}{$Q+}{$ENDIF}
   {$IFDEF REDO_R}{$R+}{$ENDIF}
+end;
+
+function LapeHash(const Str: lpString): UInt32;
+begin
+  Result := LapeHash(PChar(Str), Length(Str) * SizeOf(lpChar), 0);
 end;
 
 function LapeTypeToString(Token: ELapeBaseType): lpString;
@@ -985,51 +1042,18 @@ begin
   B := C;
 end;
 
-function _Compare8(Arr: PUInt8; Item: UInt8; Lo, Hi: Integer): Integer;
+function _BCompare(Arr: PUInt8; const Item: PUInt8; const Size: Integer; const Lo, Hi: Integer): Integer;
 var
   i: Integer;
 begin
   for i := Lo to Hi do
-    if (Arr^ = Item) then
-      Exit(i)
-    else
-      Inc(Arr);
-  Result := -1;
-end;
+  begin
+    if CompareMem(Arr, Item, Size) then
+      Exit(i);
 
-function _Compare16(Arr: PUInt16; Item: UInt16; Lo, Hi: Integer): Integer;
-var
-  i: Integer;
-begin
-  for i := Lo to Hi do
-    if (Arr^ = Item) then
-      Exit(i)
-    else
-      Inc(Arr);
-  Result := -1;
-end;
+    Inc(Arr, Size);
+  end;
 
-function _Compare32(Arr: PUInt32; Item: UInt32; Lo, Hi: Integer): Integer;
-var
-  i: Integer;
-begin
-  for i := Lo to Hi do
-    if (Arr^ = Item) then
-      Exit(i)
-    else
-      Inc(Arr);
-  Result := -1;
-end;
-
-function _Compare64(Arr: PUInt64; Item: UInt64; Lo, Hi: Integer): Integer;
-var
-  i: Integer;
-begin
-  for i := Lo to Hi do
-    if (Arr^ = Item) then
-      Exit(i)
-    else
-      Inc(Arr);
   Result := -1;
 end;
 
@@ -1199,6 +1223,81 @@ begin
     Move(Arr[Index], Arr[Index + 1], (Hi - Index) * SizeOf(UInt64));
     Arr[Index] := Item;
   end;
+end;
+
+procedure _Sort(const Arr: PByte; const ElSize: SizeInt; var Weights: TIntegerArray; const SortUp: Boolean);
+
+  procedure QuickSort(const Arr: PByte; const ElSize: SizeInt; var Weights: TIntegerArray; iLo, iHi: SizeInt; const SortUp: Boolean);
+  var
+    Lo, Hi: SizeInt;
+    Mid, T: Integer;
+    Item: PByte;
+  begin
+    {$i lpsort.inc}
+  end;
+
+begin
+  QuickSort(Arr, ElSize, Weights, Low(Weights), High(Weights), SortUp);
+end;
+
+procedure _Sort(const Arr: PByte; const ElSize: SizeInt; var Weights: TInt64Array; const SortUp: Boolean);
+
+  procedure QuickSort(const Arr: PByte; const ElSize: SizeInt; var Weights: TInt64Array; iLo, iHi: SizeInt; const SortUp: Boolean);
+  var
+    Lo, Hi: SizeInt;
+    Mid, T: Int64;
+    Item: PByte;
+  begin
+    {$i lpsort.inc}
+  end;
+
+begin
+  QuickSort(Arr, ElSize, Weights, Low(Weights), High(Weights), SortUp);
+end;
+
+procedure _Sort(const Arr: PByte; const ElSize: SizeInt; var Weights: TExtendedArray; const SortUp: Boolean);
+
+  procedure QuickSort(const Arr: PByte; const ElSize: SizeInt; var Weights: TExtendedArray; iLo, iHi: SizeInt; const SortUp: Boolean);
+  var
+    Lo, Hi: SizeInt;
+    Mid, T: Extended;
+    Item: PByte;
+  begin
+    {$i lpsort.inc}
+  end;
+
+begin
+  QuickSort(Arr, ElSize, Weights, Low(Weights), High(Weights), SortUp);
+end;
+
+procedure _Reverse(const Arr: PByte; const ElSize: SizeInt; Len: SizeInt);
+type
+  PSizeInt = ^SizeInt;
+var
+  T: PByte;
+  Lo, Hi: PByte;
+begin
+  if (Arr = nil) then
+    Exit;
+
+  if (Len = -1) then
+    Len := PSizeInt(Arr)[-1]; // High
+
+  T := GetMemory(ElSize);
+
+  Lo := Arr;
+  Hi := Arr + (Len * ElSize);
+  while (PtrUInt(Lo) < PtrUInt(Hi)) do
+  begin
+    Move(Hi^, T^, ElSize);
+    Move(Lo^, Hi^, ElSize);
+    Move(T^, Lo^, ElSize);
+
+    Dec(Hi, ElSize);
+    Inc(Lo, ElSize);
+  end;
+
+  FreeMem(T);
 end;
 
 function TLapeBaseClass._AddRef: Integer; {$IFDEF Interface_CDecl}cdecl{$ELSE}stdcall{$ENDIF};
@@ -1553,10 +1652,6 @@ begin
 end;
 
 function TLapeList{$IFNDEF FPC}<_T>{$ENDIF}.IndexOf(Item: _T; Lo, Hi: Integer): Integer;
-var
-  i, ii: Integer;
-  ItemA, ItemB: PByteArray;
-  Match: Boolean;
 begin
   if (Lo < 0) or (Lo > Hi) or (Hi >= FCount) then
     Exit(-1);
@@ -1569,30 +1664,7 @@ begin
       SizeOf(UInt64): Result := _BSearch64(@FItems[0], PUInt64(@Item)^, Lo, Hi);
     end
   else
-    case SizeOf(_T) of
-      SizeOf(UInt8) : Result := _Compare8 (@FItems[Lo], PUInt8 (@Item)^, Lo, Hi);
-      SizeOf(UInt16): Result := _Compare16(@FItems[Lo], PUInt16(@Item)^, Lo, Hi);
-      SizeOf(UInt32): Result := _Compare32(@FItems[Lo], PUInt32(@Item)^, Lo, Hi);
-      SizeOf(UInt64): Result := _Compare64(@FItems[Lo], PUInt64(@Item)^, Lo, Hi);
-      else
-      begin
-        ItemB := PByteArray(@Item);
-        for i := Lo to Hi do
-        begin
-          ItemA := PByteArray(@FItems[i]);
-          Match := True;
-          for ii := 0 to SizeOf(_T) - 1 do
-            if (ItemA^[ii] <> ItemB^[ii]) then
-            begin
-              Match := False;
-              Break;
-            end;
-          if Match then
-            Exit(i);
-        end;
-        Result := -1;
-      end;
-    end;
+    Result := _BCompare(@FItems[Lo], @Item, SizeOf(_T), Lo, Hi);
 end;
 
 function TLapeList{$IFNDEF FPC}<_T>{$ENDIF}.IndexOf(Item: _T): Integer;
@@ -1955,52 +2027,108 @@ begin
   Result.Items := FItems.ExportToArray;
 end;
 
-procedure TLapeUniqueStringDictionary{$IFNDEF FPC}<_T>{$ENDIF}.setValue(Key: lpString; Value: _T);
-var
-  Bucket: UInt32;
+function TLapeUniqueStringDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Hash(const S: PChar; const Len: Integer): UInt32;
 begin
-  Key := LowerCase(Key);
-  Bucket := LapeHash(Key) and FSize;
-  if (FArr[Bucket].Name <> '') then
-    LapeExceptionFmt(lpeDuplicateHashBucket, [FArr[Bucket].Name, Key]);
+  Result := LapeHash(S, Len * SizeOf(lpChar), FTag) and FSize;
+end;
 
-  FArr[Bucket].Name  := Key;
-  FArr[Bucket].Value := Value;
+procedure TLapeUniqueStringDictionary{$IFNDEF FPC}<_T>{$ENDIF}.setValue(Key: lpString; Value: _T);
+begin
+  SetLength(FItems, Length(FItems) + 1);
 
-  if (Length(Key) < FMinLength) then FMinLength := Length(Key);
-  if (Length(Key) > FMaxLength) then FMaxLength := Length(Key);
+  FItems[High(FItems)].Value := Value;
+  FItems[High(FItems)].Key := Key;
 end;
 
 function TLapeUniqueStringDictionary{$IFNDEF FPC}<_T>{$ENDIF}.getValue(Key: lpString): _T;
 var
-  Len: Integer;
+  Bucket, Len: Integer;
 begin
+  if (Length(FItems) <> FCount) then
+    Build();
+
   Len := Length(Key);
   if (Len >= FMinLength) and (Len <= FMaxLength) then
   begin
     Key := LowerCase(Key);
-    with FArr[LapeHash(Key) and FSize] do
-      if (Name = Key) then
-        Exit(Value);
+    Bucket := Self.Hash(PChar(Key), Len);
+
+    if (FBuckets[Bucket].Key = Key) then
+    begin
+      Result := FBuckets[Bucket].Value;
+      Exit;
+    end;
   end;
 
   Result := InvalidVal;
+end;
+
+// Bruteforce a hashtable with no collisions
+procedure TLapeUniqueStringDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Build;
+var
+  HashList: TStringList;
+  i, Len, Bucket: Integer;
+  Key: lpString;
+  HashValue: String;
+begin
+  FCount := Length(FItems);
+  FTag := 8;
+
+  HashList := TStringList.Create();
+  HashList.Sorted := True;
+
+  while (HashList.Count < FCount) do
+  begin
+    HashList.Clear();
+
+    for i := 0 to High(FItems) do
+    begin
+      Key := LowerCase(FItems[I].Key);
+      Len := Length(Key);
+
+      HashValue := IntToStr(Self.Hash(PChar(Key), Len));
+      if (HashList.IndexOf(HashValue) > -1) then
+      begin
+        FTag := FTag * 2;
+
+        Break;
+      end;
+
+      HashList.Add(HashValue);
+    end;
+
+    if (FTag >= High(Int32)) then
+      LapeException(lpeImpossible); // Increase bucket size!
+  end;
+
+  HashList.Free();
+
+  FMinLength := $FFFFFF;
+  FMaxLength := 0;
+
+  for i := 0 to High(FItems) do
+  begin
+    Key := LowerCase(FItems[I].Key);
+    Len := Length(Key);
+
+    if (Len < FMinLength) then
+      FMinLength := Len;
+    if (Len > FMaxLength) then
+      FMaxLength := Len;
+
+    Bucket := Self.Hash(PChar(Key), Len);
+
+    FBuckets[Bucket].Key := Key;
+    FBuckets[Bucket].Value := FItems[I].Value;
+  end;
 end;
 
 constructor TLapeUniqueStringDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Create(InvalidValue: _T; Size: Integer);
 begin
   inherited Create();
 
-  FMinLength := $FFFFFF;
-  FMaxLength := 0;
-
-  // must be power of two
-  FSize := 16;
-  while (FSize < Size) do
-    FSize := FSize * 2;
-
   FSize := Size - 1;
-  SetLength(FArr, Size);
+  SetLength(FBuckets, FSize + 1);
 
   InvalidVal := InvalidValue;
 end;
@@ -2025,8 +2153,10 @@ begin
 end;
 
 procedure TLapeNotifier{$IFNDEF FPC}<_T>{$ENDIF}.DeleteProc(const Proc: TNotifyProc);
+var
+  p: TNotifyProc;
 begin
-  FNotifiers.DeleteItem(Proc);
+  p := FNotifiers.DeleteItem(Proc);
 end;
 
 procedure TLapeNotifier{$IFNDEF FPC}<_T>{$ENDIF}.Notify(Sender: _T);
@@ -2061,8 +2191,10 @@ begin
 end;
 
 procedure TLapeNotifierOfObject{$IFNDEF FPC}<_T>{$ENDIF}.DeleteProc(const Proc: TNotifyProcOfObject);
+var
+  p: TNotifyProcOfObject;
 begin
-  FNotifiers.DeleteItem(Proc);
+  p := FNotifiers.DeleteItem(Proc);
 end;
 
 procedure TLapeNotifierOfObject{$IFNDEF FPC}<_T>{$ENDIF}.Notify(Sender: _T);
@@ -2077,81 +2209,128 @@ begin
   end;
 end;
 
+function TLapeDictionary{$IFNDEF FPC}<_T>{$ENDIF}.GetBucket(const Hash: UInt32): PHashBucket;
+begin
+  Assert(FSize > 0);
+
+  Result := @FBuckets[Hash and FSize];
+end;
+
+procedure TLapeDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Clear;
+begin
+  FSize := 0;
+  FCount := 0;
+  FBuckets := nil;
+end;
+
+procedure TLapeDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Grow;
+var
+  i, j: Integer;
+  OldBuckets: THashBuckets;
+begin
+  FCount := 0;
+  if (FSize = 0) then
+    FSize := FInitialSize - 1
+  else
+    FSize := (FSize + 1) * FGrowth - 1;
+
+  OldBuckets := FBuckets;
+
+  SetLength(FBuckets, 0);
+  SetLength(FBuckets, FSize + 1);
+
+  for i := 0 to High(OldBuckets) do
+    for j := 0 to OldBuckets[i].Count - 1 do
+      Add(OldBuckets[i].Items[j].Hash, OldBuckets[i].Items[j].Item, False);
+end;
+
+constructor TLapeDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Create(InitialSize: Integer; Growth: Integer);
+begin
+  inherited Create();
+
+  FInitialSize := InitialSize;
+  FGrowth := Growth;
+end;
+
+procedure TLapeDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Add(const Hash: UInt32; const Item: _T; const CanGrow: Boolean);
+begin
+  if CanGrow and ((FSize = 0) or (FCount > FSize div 2)) then
+    Grow();
+
+  with GetBucket(Hash)^ do
+  begin
+    if (Count = Length(Items)) then
+      SetLength(Items, 4 + (Count * 4));
+
+    Items[Count].Item := Item;
+    Items[Count].Hash := Hash;
+
+    Inc(Count);
+  end;
+
+  Inc(FCount);
+end;
+
+function TLapeDictionary{$IFNDEF FPC}<_T>{$ENDIF}.Remove(const Hash: UInt32; const Item: _T): Boolean;
+var
+  i: Integer;
+begin
+  Result := False;
+
+  with GetBucket(Hash)^ do
+  begin
+    for i := 0 to Count - 1 do
+      if CompareMem(@Items[i].Item, @Item, SizeOf(_T)) then
+      begin
+        Dec(Count);
+        if (i < Count) then
+          Items[i] := Items[Count];
+
+        Result := True;
+        Break;
+      end;
+  end;
+
+  if Result then
+    Dec(FCount);
+end;
+
+function TLapeDictionary{$IFNDEF FPC}<_T>{$ENDIF}.ExportToArray: TItemArray;
+var
+  i, j: Integer;
+  Count: Integer;
+begin
+  SetLength(Result, FCount);
+
+  if (FSize > 0) then
+  begin
+    Count := 0;
+
+    for i := 0 to FSize do
+      for j := 0 to FBuckets[i].Count - 1 do
+      begin
+        Result[Count] := FBuckets[i].Items[j].Item;
+
+        Inc(Count);
+      end;
+
+    Assert(Count = FCount);
+  end;
+end;
+
 procedure TLapeDeclCollection_Dictionary.NameChanged(Decl: TLapeDeclaration);
 begin
   Assert(Decl <> nil);
 
-  _Delete(Decl.FNameHashPrevious, Decl);
-  _Add(Decl.FNameHash, Decl);
-end;
+  if (Decl.FNameHashPrevious = 0) then
+    FUnnamedBucket.DeleteItem(Decl)
+  else
+    FDictionary.Remove(Decl.FNameHashPrevious, Decl);
 
-function TLapeDeclCollection_Dictionary._Delete(Hash: UInt32; Decl: TLapeDeclaration): Boolean;
-begin
-  Assert(Decl <> nil);
-
-  Result := (FCount > 0) and (FBuckets[Hash and FSize].DeleteItem(Decl) <> nil);
-  if Result then
-  begin
-    Dec(FCount);
-    if (Decl.FName <> '') then
-      Dec(FNamedCount);
-  end;
-
-  Decl.FNameChangeNotifier.DeleteProc(@NameChanged);
-end;
-
-procedure TLapeDeclCollection_Dictionary._Add(Hash: UInt32; Decl: TLapeDeclaration);
-begin
-  Assert(Decl <> nil);
-
-  if (FSize = 0) or (FNamedCount > (FSize div 2)) then
-    _Grow();
-
-  with FBuckets[Hash and FSize] do
-    Add(Decl);
-
-  Inc(FCount);
-  if (Decl.FName <> '') then
-    Inc(FNamedCount);
-
-  Decl.FNameChangeNotifier.AddProc(@NameChanged);
-end;
-
-procedure TLapeDeclCollection_Dictionary._Grow;
-var
-  i, j: Integer;
-  NewBuckets: THashBuckets;
-  Decl: TLapeDeclaration;
-begin
-  if (FSize = 0) then
-  begin
-    FSize := MIN_SIZE - 1;
-
-    SetLength(FBuckets, FSize + 1);
-    for i := 0 to FSize do
-      FBuckets[i] := THashBucket.Create(nil, dupAccept, True);
-  end else
-  begin
-    FSize := (FSize + 1) * GROWTH_STRATEGY - 1;
-
-    SetLength(NewBuckets, FSize + 1);
-    for i := 0 to FSize do
-      NewBuckets[i] := THashBucket.Create(nil, dupAccept, True);
-
-    for i := 0 to High(FBuckets) do
-    begin
-      for j := 0 to FBuckets[i].Count - 1 do
-      begin
-        Decl := FBuckets[i][j];
-        with NewBuckets[Decl.FNameHash and FSize] do
-          Add(Decl);
-      end;
-
-      FBuckets[i].Free();
-    end;
-
-    FBuckets := NewBuckets;
-  end;
+  if (Decl.FNameHash = 0) then
+    FUnnamedBucket.Add(Decl)
+  else
+    FDictionary.Add(Decl.FNameHash, Decl);
 end;
 
 function TLapeDeclCollection_Dictionary.getItem(Index: Integer): TLapeDeclaration;
@@ -2163,105 +2342,115 @@ end;
 
 function TLapeDeclCollection_Dictionary.getCount: Integer;
 begin
-  Result := FCount;
+  Result := FDictionary.FCount + FUnnamedBucket.Count;
+end;
+
+constructor TLapeDeclCollection_Dictionary.Create;
+begin
+  inherited Create;
+
+  FUnnamedBucket := TList.Create(nil, dupAccept, True);
+  FDictionary := TDictionary.Create();
 end;
 
 destructor TLapeDeclCollection_Dictionary.Destroy;
 begin
   Clear();
 
+  FreeAndNil(FUnnamedBucket);
+  FreeAndNil(FDictionary);
+
   inherited;
 end;
 
 procedure TLapeDeclCollection_Dictionary.Clear;
-var
-  i: Integer;
 begin
-  if (FCount > 0) then
-    for i := 0 to FSize do
-      FBuckets[i].Free();
-
-  FNamedCount := 0;
-  FCount := 0;
-  FSize := 0;
+  FUnnamedBucket.Clear();
+  FDictionary.Clear();
 end;
 
 procedure TLapeDeclCollection_Dictionary.Add(Decl: TLapeDeclaration);
 begin
   Assert(Decl <> nil);
 
-  _Add(Decl.FNameHash, Decl);
+  if (Decl.FNameHash = 0) then
+    FUnnamedBucket.Add(Decl)
+  else
+    FDictionary.Add(Decl.FNameHash, Decl);
+
+  Decl.FNameChangeNotifier.AddProc({$IFDEF FPC}@{$ENDIF}NameChanged);
 end;
 
 function TLapeDeclCollection_Dictionary.Delete(Decl: TLapeDeclaration): Boolean;
 begin
-  Result := _Delete(Decl.FNameHash, Decl);
+  Assert(Decl <> nil);
+
+  if (Decl.FNameHash = 0) then
+    Result := FUnnamedBucket.DeleteItem(Decl) <> nil
+  else
+    Result := FDictionary.Remove(Decl.FNameHash, Decl);
+
+  Decl.FNameChangeNotifier.DeleteProc({$IFDEF FPC}@{$ENDIF}NameChanged);
 end;
 
 function TLapeDeclCollection_Dictionary.Get(Name: lpString; out Decl: TLapeDeclaration): Boolean;
 var
-  Bucket: THashBucket;
   i: Integer;
 begin
-  if (FCount > 0) then
-  begin
-    Bucket := FBuckets[LapeHash(Name) and FSize];
-
-    for i := 0 to Bucket.Count - 1 do
-      if (Bucket[i].FNameLapeCase = Name) then
-      begin
-        Decl := Bucket[i];
-
-        Result := True;
-        Exit;
-      end;
-  end;
-
   Result := False;
+
+  if (FDictionary.FSize > 0) then
+    with FDictionary.GetBucket(LapeHash(Name))^ do
+    begin
+      for i := 0 to Count - 1 do
+        if (Items[i].Item.FNameLapeCase = Name) then
+        begin
+          Decl := Items[i].Item;
+
+          Result := True;
+          Break;
+        end;
+    end;
 end;
 
 function TLapeDeclCollection_Dictionary.Get(Name: lpString; AClass: TLapeDeclarationClass; out Decl: TLapeDeclaration): Boolean;
 var
-  Bucket: THashBucket;
   i: Integer;
 begin
-  if (FCount > 0) then
-  begin
-    Bucket := FBuckets[LapeHash(Name) and FSize];
-
-    for i := 0 to Bucket.Count - 1 do
-      if (Bucket[i].FNameLapeCase = Name) and (Bucket[i] is AClass) then
-      begin
-        Decl := Bucket[i];
-
-        Result := True;
-        Exit;
-      end;
-  end;
-
   Result := False;
+
+  if (FDictionary.FSize > 0) then
+    with FDictionary.GetBucket(LapeHash(Name))^ do
+    begin
+      for i := 0 to Count - 1 do
+        if (Items[i].Item.FNameLapeCase = Name) and (Items[i].Item is AClass) then
+        begin
+          Decl := Items[i].Item;
+
+          Result := True;
+          Break;
+        end;
+    end;
 end;
 
-function TLapeDeclCollection_Dictionary.GetByClass(AClass: TLapeDeclarationClass ): TLapeDeclArray;
+function TLapeDeclCollection_Dictionary.GetByClass(AClass: TLapeDeclarationClass): TLapeDeclArray;
 var
-  Current: Integer;
-  Decl: TLapeDeclaration;
+  i, Len: Integer;
+  Decls: TLapeDeclArray;
 begin
-  SetLength(Result, FCount);
+  Len := 0;
+  Decls := ExportToArray();
 
-  if (FCount > 0) then
-  begin
-    Current := 0;
+  SetLength(Result, Length(Decls));
 
-    for Decl in ExportToArray() do
-      if (Decl is AClass) then
-      begin
-        Result[Current] := Decl;
-        Inc(Current);
-      end;
+  for i := 0 to High(Decls) do
+    if (Decls[i] is AClass) then
+    begin
+      Result[Len] := Decls[i];
+      Inc(Len);
+    end;
 
-    SetLength(Result, Current);
-  end;
+  SetLength(Result, Len);
 end;
 
 function TLapeDeclCollection_Dictionary.IndexOf(Decl: TLapeDeclaration): Integer;
@@ -2272,30 +2461,34 @@ begin
 end;
 
 function TLapeDeclCollection_Dictionary.Exists(Decl: TLapeDeclaration): Boolean;
+var
+  i: Integer;
 begin
-  Result := (FCount > 0) and FBuckets[Decl.FNameHash and FSize].ExistsItem(Decl);
+  Assert(Decl <> nil);
+
+  if (Decl.FNameHash = 0) then
+  begin
+    Result := FUnnamedBucket.ExistsItem(Decl);
+    Exit;
+  end;
+
+  if (FDictionary.FSize > 0) then
+    with FDictionary.GetBucket(Decl.FNameHash)^ do
+    begin
+      for i := 0 to Count - 1 do
+        if (Items[i].Item = Decl) then
+        begin
+          Result := True;
+          Exit;
+        end;
+    end;
+
+  Result := False;
 end;
 
 function TLapeDeclCollection_Dictionary.ExportToArray: TLapeDeclArray;
-var
-  i: Integer;
-  Current: Integer;
-  Bucket: THashBucket;
 begin
-  SetLength(Result, FCount);
-  if (FCount = 0) then
-    Exit;
-
-  Current := 0;
-  for i := 0 to FSize do
-  begin
-    Bucket := FBuckets[i];
-    if (Bucket.Count = 0) then
-      Continue;
-
-    Move(Bucket.FItems[0], Result[Current], Bucket.Count * SizeOf(TLapeDeclaration));
-    Inc(Current, Bucket.Count);
-  end;
+  Result := TLapeDeclArray(Concat(FDictionary.ExportToArray(), FUnnamedBucket.ExportToArray()));
 end;
 
 function TLapeDeclCollection_List.getItem(Index: Integer): TLapeDeclaration;
@@ -2403,7 +2596,7 @@ end;
 
 function TLapeDeclCollection_List.ExportToArray: TLapeDeclArray;
 begin
-  Result := FList.ExportToArray();
+  Result := TLapeDeclArray(FList.ExportToArray());
 end;
 
 constructor TLapeDeclarationList.Create(AList: TLapeDeclCollection; ManageDeclarations: Boolean);
@@ -2629,7 +2822,7 @@ begin
   inherited Create();
 
   FNameChangeNotifier := TNameChangeNotifier.Create();
-  FNameHash := Lape_EmptyHash;
+  FNameHash := 0;
   if (AName <> '') then
     Name := AName;
 

@@ -30,6 +30,7 @@ type
     tk_kw_Array,
     tk_kw_Begin,
     tk_kw_Case,
+    tk_kw_Class,
     tk_kw_Const,
     tk_kw_ConstRef,
     tk_kw_Deprecated,
@@ -145,7 +146,7 @@ type
     Token: EParserToken;
   end;
 
-  TLapeKeywordDictionary = specialize TLapeUniqueStringDictionary<EParserToken>;
+  TLapeKeywordDictionary = {$IFDEF FPC}specialize{$ENDIF} TLapeUniqueStringDictionary<EParserToken>;
 
   TLapeTokenizerBase = class(TLapeBaseDeclClass)
   protected
@@ -160,8 +161,6 @@ type
 
     FOnParseDirective: TLapeParseDirective;
     FOnHandleDirective: TLapeHandleDirective;
-
-    FKeywordDictionary: TLapeKeywordDictionary;
 
     function Compare(Key: lpString): Boolean; virtual; abstract;
     function Identify: EParserToken; virtual;
@@ -182,7 +181,6 @@ type
     NullPos: TDocPos;
 
     constructor Create(AFileName: lpString = ''); reintroduce; virtual;
-    destructor Destroy; override;
     procedure Reset(ClearDoc: Boolean = False); virtual;
     function getState: Pointer; virtual;
     procedure setState(const State: Pointer; DoFreeState: Boolean = True); virtual;
@@ -213,7 +211,6 @@ type
     property Pos: Integer read FPos write setPos;
     property Len: Integer read FLen;
     property InPeek: Boolean read FInPeek;
-  published
     property OnParseDirective: TLapeParseDirective read FOnParseDirective write FOnParseDirective;
     property OnHandleDirective: TLapeHandleDirective read FOnHandleDirective write FOnHandleDirective;
   end;
@@ -228,7 +225,6 @@ type
     procedure Reset(ClearDoc: Boolean = False); override;
     constructor Create(ADoc: lpString; AFileName: lpString = ''); reintroduce; virtual;
     function getChar(Offset: Integer = 0): lpChar; override;
-  published
     property Doc: lpString read FDoc write setDoc;
   end;
 
@@ -254,7 +250,7 @@ const
   ParserToken_Symbols = [tk_sym_BracketClose..tk_sym_SemiColon];
   ParserToken_Types = [tk_typ_Float..tk_typ_Char];
 
-  Lape_Keywords: array[0..51 {$IFDEF Lape_PascalLabels}+1{$ENDIF}] of TLapeKeyword = (
+  Lape_Keywords: array[0..52 {$IFDEF Lape_PascalLabels}+1{$ENDIF}] of TLapeKeyword = (
       (Keyword: 'AND';           Token: tk_op_AND),
       (Keyword: 'DIV';           Token: tk_op_DIV),
       (Keyword: 'IN';            Token: tk_op_IN),
@@ -269,6 +265,7 @@ const
       (Keyword: 'ARRAY';         Token: tk_kw_Array),
       (Keyword: 'BEGIN';         Token: tk_kw_Begin),
       (Keyword: 'CASE';          Token: tk_kw_Case),
+      (Keyword: 'CLASS';         Token: tk_kw_Class),
       (Keyword: 'CONST';         Token: tk_kw_Const),
       (Keyword: 'CONSTREF';      Token: tk_kw_ConstRef),
       (Keyword: 'DEPRECATED';    Token: tk_kw_Deprecated),
@@ -418,6 +415,12 @@ function DetermineIntType(i1, i2: Int64; MinSize: UInt8): ELapeBaseType; overloa
 function DetermineIntType(i1, i2: Int64; MinType: ELapeBaseType; DoGrow: Boolean = True): ELapeBaseType; overload;
 function DetermineIntType(i1, i2: Int64): ELapeBaseType; overload;
 function DetermineIntType(Size: Integer; Signed: Boolean): ELapeBaseType; overload;
+
+procedure LapeInitKeywordDictionary;
+procedure LapeFreeKeywordDictionary;
+
+var
+  LapeKeywordDictionary: TLapeKeywordDictionary;
 
 implementation
 
@@ -672,7 +675,7 @@ var
   tmpDocPos: TDocPos;
   CommentLevel: Integer;
 
-  procedure NextPos_CountLines; inline;
+  procedure NextPos_CountLines; {$IFDEF FPC}inline;{$ENDIF}
   begin
     repeat
       case CurChar of
@@ -688,14 +691,14 @@ var
     until (not (CurChar in [#9, #32, #10, #13]));
   end;
 
-  function Alpha: EParserToken; inline;
+  function Alpha: EParserToken; {$IFDEF FPC}inline;{$ENDIF}
   var
     Token: EParserToken;
   begin
     while (getChar(1) in ['0'..'9', 'A'..'Z', '_', 'a'..'z']) do
       Inc(FPos);
 
-    Token := FKeywordDictionary[getTokString()];
+    Token := LapeKeywordDictionary[getTokString()];
     if (Token <> tk_Unknown) then
       Result := setTok(Token)
     else
@@ -837,31 +840,24 @@ begin
     '(':
       if (getChar(1) = '*') then
       begin
-        Inc(FPos, 2);
+        tmpDocPos := DocPos;
 
-        CommentLevel := 1;
+        CommentLevel := 0;
+
         repeat
-          if (CurChar in ['(', '*']) then
-          begin
-            NextPos_CountLines();
-            case CurChar of
-              '*': Inc(CommentLevel);
-              ')':
-                begin
-                  Dec(CommentLevel);
-                  if (CommentLevel = 0) then
-                    Break;
-                end;
-            end;
-          end;
+          if (CurChar = '(') and (getChar(1) = '*') then
+            Inc(CommentLevel);
+          if (CurChar = '*') and (getChar(1) = ')') then
+            Dec(CommentLevel);
+
           NextPos_CountLines();
-        until (CurChar = #0);
+        until (CurChar = #0) or (CommentLevel = 0);
+
+        if (CurChar = #0) then
+          LapeException(lpeUnClosedComment, tmpDocPos);
 
         Result := setTok(tk_Comment);
-        if (CurChar = '*') then
-          Inc(FPos);
-      end
-      else
+      end else
         Result := setTok(tk_sym_ParenthesisOpen);
 
     ';': Result := setTok(tk_sym_SemiColon);
@@ -875,6 +871,8 @@ begin
             LapeException(lpeUnknownDirective, DocPos);
         end else
         begin
+          tmpDocPos := DocPos;
+
           CommentLevel := 1;
 
           repeat
@@ -887,8 +885,12 @@ begin
                     Break;
                 end;
             end;
+
             NextPos_CountLines();
           until (CurChar = #0);
+
+          if (CurChar = #0) then
+            LapeException(lpeUnClosedComment, tmpDocPos);
 
           Result := setTok(tk_Comment);
         end;
@@ -1129,18 +1131,12 @@ begin
 end;
 
 constructor TLapeTokenizerBase.Create(AFileName: lpString = '');
-var
-  i: Integer;
 begin
   inherited Create();
 
   FFileName := AFileName;
   FOnParseDirective := nil;
   FOnHandleDirective := nil;
-
-  FKeywordDictionary := TLapeKeywordDictionary.Create(tk_Unknown, 512);
-  for i := 0 to High(Lape_Keywords) do
-    FKeywordDictionary[Lape_Keywords[i].Keyword] := Lape_Keywords[i].Token;
 
   OverridePos := nil;
   NullPos := NullDocPos;
@@ -1151,13 +1147,6 @@ begin
   end;
 
   Reset();
-end;
-
-destructor TLapeTokenizerBase.Destroy;
-begin
-  FreeAndNil(FKeywordDictionary);
-
-  inherited Destroy();
 end;
 
 procedure TLapeTokenizerBase.Reset(ClearDoc: Boolean = False);
@@ -1371,7 +1360,7 @@ var
 begin
   StrList := TStringList.Create();
   try
-    StrList.LoadFromFile(string(AFileName));
+    StrList.LoadFromFile(string(AFileName), TEncoding.ANSI);
     inherited Create(lpString(StrList.Text), lpString(AFileName));
   finally
     StrList.Free();
@@ -1383,10 +1372,29 @@ begin
   Create(UnicodeString(AFileName));
 end;
 
+procedure LapeInitKeywordDictionary;
+var
+  i: Integer;
+begin
+  LapeKeywordDictionary := TLapeKeywordDictionary.Create(tk_Unknown);
+  for i := Low(Lape_Keywords) to High(Lape_Keywords) do
+    LapeKeywordDictionary[Lape_Keywords[i].Keyword] := Lape_Keywords[i].Token;
+end;
+
+procedure LapeFreeKeywordDictionary;
+begin
+  FreeAndNil(LapeKeywordDictionary);
+end;
+
 initialization
   {$IFDEF LoadDefaultFormatSettings}
   GetLocaleFormatSettings(0, FormatSettings);
   {$ENDIF}
+
+  LapeInitKeywordDictionary();
+
+finalization
+  LapeFreeKeywordDictionary();
 
 end.
 
