@@ -38,6 +38,7 @@ type
     tk_kw_DownTo,
     tk_kw_Else,
     tk_kw_End,
+    tk_kw_Enum,
     tk_kw_Except,
     tk_kw_Experimental,
     tk_kw_External,
@@ -162,7 +163,7 @@ type
     FOnParseDirective: TLapeParseDirective;
     FOnHandleDirective: TLapeHandleDirective;
 
-    function Compare(Key: lpString): Boolean; virtual; abstract;
+    function Compare(const Key: lpString): Boolean; virtual; abstract;
     function Identify: EParserToken; virtual;
     function HandleDirective: Boolean; virtual;
 
@@ -218,7 +219,7 @@ type
   TLapeTokenizerString = class(TLapeTokenizerBase)
   protected
     FDoc: lpString;
-    function Compare(Key: lpString): Boolean; override;
+    function Compare(const Key: lpString): Boolean; override;
     function getTokString: lpString; override;
     procedure setDoc(const ADoc: lpString); virtual;
   public
@@ -250,7 +251,7 @@ const
   ParserToken_Symbols = [tk_sym_BracketClose..tk_sym_SemiColon];
   ParserToken_Types = [tk_typ_Float..tk_typ_Char];
 
-  Lape_Keywords: array[0..52 {$IFDEF Lape_PascalLabels}+1{$ENDIF}] of TLapeKeyword = (
+  Lape_Keywords: array[0..53 {$IFDEF Lape_PascalLabels}+1{$ENDIF}] of TLapeKeyword = (
       (Keyword: 'AND';           Token: tk_op_AND),
       (Keyword: 'DIV';           Token: tk_op_DIV),
       (Keyword: 'IN';            Token: tk_op_IN),
@@ -273,6 +274,7 @@ const
       (Keyword: 'DOWNTO';        Token: tk_kw_DownTo),
       (Keyword: 'ELSE';          Token: tk_kw_Else),
       (Keyword: 'END';           Token: tk_kw_End),
+      (Keyword: 'ENUM';          Token: tk_kw_Enum),
       (Keyword: 'EXCEPT';        Token: tk_kw_Except),
       (Keyword: 'EXPERIMENTAL';  Token: tk_kw_Experimental),
       (Keyword: 'EXTERNAL';      Token: tk_kw_External),
@@ -996,6 +998,7 @@ end;
 function TLapeTokenizerBase.HandleDirective: Boolean;
 var
   Directive, Argument: lpString;
+  Depth: Integer;
 begin
   try
     if ({$IFNDEF FPC}@{$ENDIF}FOnParseDirective <> nil) then
@@ -1013,15 +1016,23 @@ begin
         Argument := ''
       else
       begin
-        while (not (getChar(1) in ['}', #0])) do
+        Depth := 1;
+        while (Depth > 1) or (not (getChar(1) in ['}', #0])) do
         begin
           Inc(FPos);
-          if CurChar in [#10,#13] then
-          begin
-            if (CurChar = #13) and (getChar(1) = #10) then Inc(FPos);
-            Inc(FDocPos.Line);
+
+          case CurChar of
+            '{': Inc(Depth);
+            '}': Dec(Depth);
+            #10, #13:
+              begin
+                if (CurChar = #13) and (getChar(1) = #10) then
+                  Inc(FPos);
+                Inc(FDocPos.Line);
+              end;
           end;
         end;
+
         Argument := TokString;
         Inc(FPos);
       end;
@@ -1030,15 +1041,24 @@ begin
         Exit(True);
     end
     else
-      while (not (CurChar in ['}', #0])) do
+    begin
+      Depth := 1;
+      while (Depth > 1) or (not (getChar(1) in ['}', #0])) do
       begin
         Inc(FPos);
-        if CurChar in [#10,#13] then
-        begin
-          if (CurChar = #13) and (getChar(1) = #10) then Inc(FPos);
-          Inc(FDocPos.Line);
+
+        case CurChar of
+          '{': Inc(Depth);
+          '}': Dec(Depth);
+          #10, #13:
+            begin
+              if (CurChar = #13) and (getChar(1) = #10) then
+                Inc(FPos);
+              Inc(FDocPos.Line);
+            end;
         end;
       end;
+    end;
 
     Result := False;
   finally
@@ -1302,7 +1322,7 @@ begin
     NextNoJunk();
 end;
 
-function TLapeTokenizerString.Compare(Key: lpString): Boolean;
+function TLapeTokenizerString.Compare(const Key: lpString): Boolean;
 var
   KeyLen: Integer;
 begin

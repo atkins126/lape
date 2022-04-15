@@ -31,6 +31,7 @@ type
     lcoHints,                          // {$H} {$HINTS}
     lcoCOperators,                     //      {$COPERATORS}
     lcoAutoObjectify,                  //      {$AUTOOBJECTIFY}
+    lcoArrayHelpers,                   //      {$ARRAYHELPERS}
     lcoDuplicateLocalNameHints,        //
     lcoInitExternalResult              // Ensure empty result for external calls (useful for ffi)
   );
@@ -38,7 +39,7 @@ type
   PCompilerOptionsSet = ^ECompilerOptionsSet;
 
 const
-  Lape_OptionsDef = [lcoAutoObjectify, lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress];
+  Lape_OptionsDef = [lcoArrayHelpers, lcoAutoObjectify, lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress];
   Lape_PackRecordsDef = 8;
 
 type
@@ -430,6 +431,7 @@ type
 
     constructor Create(ACompiler: TLapeCompilerBase; AObjType: TLapeType; AParams: TLapeParameterList; ARes: TLapeType = nil; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; overload; virtual;
     constructor Create(AMethod: TLapeType_Method; AObjType: TLapeType); overload; virtual;
+
     function CreateCopy(DeepCopy: Boolean = False): TLapeType; override;
 
     function Equals(Other: TLapeType; ContextOnly: Boolean = True): Boolean; override;
@@ -439,7 +441,7 @@ type
   end;
 
   TLapeGetOverloadedMethod = function(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method;
-    AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar of object;
+    AObjectType: TLapeType = nil; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar of object;
 
   TLapeType_OverloadedMethod = class(TLapeType)
   protected
@@ -459,9 +461,9 @@ type
     function overrideMethod(AMethod: TLapeGlobalVar): TLapeGlobalVar; virtual;
 
     function getMethodIndex(AType: TLapeType_Method): Integer; overload; virtual;
-    function getMethodIndex(AParams: TLapeTypeArray; AResult: TLapeType = nil): Integer; overload; virtual;
+    function getMethodIndex(AParams: TLapeTypeArray; AResult: TLapeType = nil; AObjectType: TLapeType = nil): Integer; overload; virtual;
     function getMethod(AType: TLapeType_Method): TLapeGlobalVar; overload; virtual;
-    function getMethod(AParams: TLapeTypeArray; AResult: TLapeType = nil): TLapeGlobalVar; overload; virtual;
+    function getMethod(AParams: TLapeTypeArray; AResult: TLapeType = nil; AObjectType: TLapeType = nil): TLapeGlobalVar; overload; virtual;
 
     function NewGlobalVar(AName: lpString = ''; ADocPos: PDocPos = nil): TLapeGlobalVar; virtual;
 
@@ -684,6 +686,9 @@ type
     function getGlobalVar(AName: lpString): TLapeGlobalVar; virtual;
     function getGlobalType(AName: lpString): TLapeType; virtual;
 
+    function getIntegerArray: TLapeType; virtual;
+    function getFloatArray: TLapeType; virtual;
+
     function getDeclaration(AName: lpString; AStackInfo: TLapeStackInfo; LocalOnly: Boolean = False; CheckWith: Boolean = True): TLapeDeclaration; overload; virtual;
     function getDeclaration(AName: lpString; LocalOnly: Boolean = False; CheckWith: Boolean = True): TLapeDeclaration; overload; virtual;
     function hasDeclaration(AName: lpString; AStackInfo: TLapeStackInfo; LocalOnly: Boolean = False; CheckWith: Boolean = True): Boolean; overload; virtual;
@@ -710,6 +715,7 @@ function getTypeArray(Arr: array of TLapeType): TLapeTypeArray;
 procedure ClearBaseTypes(var Arr: TLapeBaseTypes; DoFree: Boolean);
 procedure LoadBaseTypes(var Arr: TLapeBaseTypes; Compiler: TLapeCompilerBase);
 
+function GetMethodName(VarType: TLapeType): lpString;
 function MethodOfObject(VarType: TLapeType): Boolean;
 function ValidFieldName(Field: TLapeGlobalVar): Boolean; overload;
 function ValidFieldName(Field: TResVar): Boolean; overload;
@@ -807,6 +813,22 @@ begin
   Arr[ltUnicodeString] := TLapeType_UnicodeString.Create(Compiler, LapeTypeToString(ltUnicodeString));
   Arr[ltVariant] := TLapeType_Variant.Create(Compiler, LapeTypeToString(ltVariant));
   Arr[ltPointer] := TLapeType_Pointer.Create(Compiler, nil, False, LapeTypeToString(ltPointer));
+end;
+
+function GetMethodName(VarType: TLapeType): lpString;
+begin
+  Result := '';
+
+  if (VarType is TLapeType_OverloadedMethod) and (VarType.ManagedDeclarations.Count > 0) then
+    VarType := TLapeGlobalVar(VarType.ManagedDeclarations[0]).VarType;
+
+  if (VarType is TLapeType_Method) then
+  begin
+    if (VarType is TLapeType_MethodOfType) then
+      Result := TLapeType_MethodOfType(VarType).ObjectType.Name + '.' + VarType.Name
+    else
+      Result := VarType.Name;
+  end;
 end;
 
 function MethodOfObject(VarType: TLapeType): Boolean;
@@ -3045,6 +3067,7 @@ end;
 function TLapeType_OverloadedMethod.getMethodIndex(AType: TLapeType_Method): Integer;
 var
   i: Integer;
+  ObjectType: TLapeType;
 begin
   if (AType = nil) then
     Exit(-1);
@@ -3053,13 +3076,17 @@ begin
     if TLapeType_Method(TLapeGlobalVar(FManagedDecls[i]).VarType).EqualParams(AType) then
       Exit(i);
 
+  ObjectType := nil;
+  if (AType is TLapeType_MethodOfType) then
+    ObjectType := TLapeType_MethodOfType(AType).ObjectType;
+
   if ({$IFNDEF FPC}@{$ENDIF}OnFunctionNotFound <> nil) then
-    Result := FManagedDecls.IndexOf(OnFunctionNotFound(Self, AType, nil, nil))
+    Result := FManagedDecls.IndexOf(OnFunctionNotFound(Self, AType, ObjectType, nil, nil))
   else
     Result := -1;
 end;
 
-function TLapeType_OverloadedMethod.getMethodIndex(AParams: TLapeTypeArray; AResult: TLapeType = nil): Integer;
+function TLapeType_OverloadedMethod.getMethodIndex(AParams: TLapeTypeArray; AResult: TLapeType; AObjectType: TLapeType): Integer;
 
   function SizeWeight(a, b: TLapeType): SizeInt; {$IFDEF Lape_Inline}inline;{$ENDIF}
   begin
@@ -3168,7 +3195,7 @@ begin
     end;
 
   if (Result < 0) and ({$IFNDEF FPC}@{$ENDIF}OnFunctionNotFound <> nil) then
-    Result := FManagedDecls.IndexOf(OnFunctionNotFound(Self, nil, AParams, AResult));
+    Result := FManagedDecls.IndexOf(OnFunctionNotFound(Self, nil, AObjectType, AParams, AResult));
 end;
 
 function TLapeType_OverloadedMethod.getMethod(AType: TLapeType_Method): TLapeGlobalVar;
@@ -3176,7 +3203,7 @@ begin
   Result := FManagedDecls[getMethodIndex(AType)] as TLapeGlobalVar;
 end;
 
-function TLapeType_OverloadedMethod.getMethod(AParams: TLapeTypeArray; AResult: TLapeType = nil): TLapeGlobalVar;
+function TLapeType_OverloadedMethod.getMethod(AParams: TLapeTypeArray; AResult: TLapeType; AObjectType: TLapeType): TLapeGlobalVar;
 begin
   Result := FManagedDecls[getMethodIndex(AParams, AResult)] as TLapeGlobalVar;
 end;
@@ -3988,11 +4015,17 @@ begin
   FBaseOptions_PackRecords := Lape_PackRecordsDef;
 
   FOnHint := nil;
+  FStackInfo := nil;
 
   FreeEmitter := ManageEmitter;
   if (AEmitter = nil) then
     AEmitter := TLapeCodeEmitter.Create();
   FEmitter := AEmitter;
+
+  FGlobalDeclarations := TLapeDeclarationList.Create(nil);
+  FManagedDeclarations := TLapeDeclarationList.Create(nil);
+  for BaseType in LapeBaseTypes do
+    FCachedDeclarations[BaseType] := TLapeVarMap.Create(nil, dupIgnore, True, '', True);
 
   LoadBaseTypes(FBaseTypes, Self);
 
@@ -4001,12 +4034,8 @@ begin
     if (FBaseTypes[BaseType] <> nil) then
       FBaseTypesDictionary[FBaseTypes[BaseType].Name] := FBaseTypes[BaseType];
 
-  FStackInfo := nil;
-
-  FGlobalDeclarations := TLapeDeclarationList.Create(nil);
-  FManagedDeclarations := TLapeDeclarationList.Create(nil);
-  for BaseType in LapeBaseTypes do
-    FCachedDeclarations[BaseType] := TLapeVarMap.Create(nil, dupIgnore, True, '', True);
+  addGlobalDecl(TLapeType_DynArray.Create(getBaseType(ltInt32), Self, '!integerarray'));
+  addGlobalDecl(TLapeType_DynArray.Create(getBaseType(ltExtended), Self, '!floatarray'));
 end;
 
 destructor TLapeCompilerBase.Destroy;
@@ -4470,6 +4499,20 @@ begin
   Result := nil;
   if FGlobalDeclarations.Get(AName, Decl, bFalse) and (Decl is TLapeType) then
     Result := TLapeType(Decl);
+end;
+
+function TLapeCompilerBase.getIntegerArray: TLapeType;
+begin
+  Result := getGlobalType('!integerarray');
+
+  Assert(Result <> nil);
+end;
+
+function TLapeCompilerBase.getFloatArray: TLapeType;
+begin
+  Result := getGlobalType('!floatarray');
+
+  Assert(Result <> nil);
 end;
 
 function TLapeCompilerBase.getDeclaration(AName: lpString; AStackInfo: TLapeStackInfo; LocalOnly: Boolean = False; CheckWith: Boolean = True): TLapeDeclaration;

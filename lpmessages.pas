@@ -60,6 +60,7 @@ const
   lpeExpected = '%s expected';
   lpeExpectedArray = 'Array expected';
   lpeExpectedArrayOfType = 'Array expected of type "%s"';
+  lpeExpectedDynamicArray = 'Dynamic array expected';
   lpeExpectedNormalMethod = 'Normal method expected';
   lpeExpectedOther = 'Found unexpected token "%s", expected "%s"';
   lpeExpressionExpected = 'Expression expected';
@@ -108,6 +109,7 @@ const
   lpeParentOutOfScope = 'Parent declaration is out of scope';
   lpeRuntime = 'Runtime error: "%s"';
   lpeStatementNotAllowed = 'Statement not allowed here';
+  lpeStaticMethodExpected = 'Variable expected. "%s" is not a static method';
   lpeTooMuchParameters = 'Too many parameters found';
   lpeTypeExpected = 'Type expected';
   lpeUnClosedComment = 'Unclosed comment';

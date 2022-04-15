@@ -450,6 +450,12 @@ type
     function Compile(var Offset: Integer): TResVar; override;
   end;
 
+  TLapeTree_InternalMethod_Remove = class(TLapeTree_InternalMethod)
+  public
+    function resType: TLapeType; override;
+    function Compile(var Offset: Integer): TResVar; override;
+  end;
+
   TLapeTree_Operator = class(TLapeTree_DestExprBase)
   protected
     FRestructure: TInitBool;
@@ -1059,12 +1065,15 @@ function TLapeTree_InternalMethod_Sort.Compile(var Offset: Integer): TResVar;
     ArrayPointer: TResVar;
     ArrayType: TLapeType;
     WeightsCopy: TLapeTree_InternalMethod_Copy;
+    ArrayLength: TLapeTree_InternalMethod_Length;
   begin
     Result := NullResVar;
     Dest := NullResVar;
 
     if (not (WeightsVar.VarType is TLapeType_DynArray)) then
       LapeException(lpeExpectedArray, DocPos);
+    if (FParams.Count <> 3) then
+      LapeExceptionFmt(lpeWrongNumberParams, [3], DocPos);
 
     ArrayType := TLapeType_DynArray(ArrayVar.VarType).PType;
 
@@ -1098,16 +1107,18 @@ function TLapeTree_InternalMethod_Sort.Compile(var Offset: Integer): TResVar;
     WeightsCopy := TLapeTree_InternalMethod_Copy.Create(Self);
     WeightsCopy.addParam(TLapeTree_ResVar.Create(WeightsVar.IncLock(), Self));
 
+    ArrayLength := TLapeTree_InternalMethod_Length.Create(Self);
+    ArrayLength.addParam(TLapeTree_ResVar.Create(ArrayVar.IncLock(), Self));
+
     try
-      // procedure _SortWeighted(A: Pointer; ElSize: SizeInt; Weights: array of Int32; SortUp: EvalBool = True)
+      // procedure _SortWeighted(A: Pointer; ElSize: SizeInt; Weights: array of Int32; SortUp: EvalBool)
       with TLapeTree_Invoke.Create('_SortWeighted', Self) do
       try
         addParam(TLapeTree_ResVar.Create(ArrayPointer.IncLock(), Self));
         addParam(TLapeTree_Integer.Create(ArrayType.Size, Self));
+        addParam(ArrayLength);
         addParam(WeightsCopy);
-
-        if (Self.Params.Count = 3) then
-          addParam(Self.Params[2]);
+        addParam(Self.Params[2]); // SortUp
 
         Compile(Offset).Spill(1);
       finally
@@ -1120,11 +1131,8 @@ function TLapeTree_InternalMethod_Sort.Compile(var Offset: Integer): TResVar;
     end;
   end;
 
-const
-  CompareParameter: TLapeParameter = (ParType: lptConstRef; VarType: TLapeType(nil); Default: TLapeVar(nil));
 var
   ArrayVar, CompareVar, ArrayPointer: TResVar;
-  ArrayWasConstant: Boolean;
   ArrayType, ResultType: TLapeType;
 begin
   Result := NullResVar;
@@ -1140,111 +1148,96 @@ begin
   if (not (ArrayVar.VarType is TLapeType_DynArray)) then
     LapeException(lpeExpectedArray, DocPos);
 
-  ArrayWasConstant := ArrayVar.isConstant;
-  if ArrayWasConstant then
-    ArrayVar.isConstant := False;
+  // Check if user defined `_Sort` exists. Useful for providing a native method
+  if InvokeMagicMethod(Self, '_Sort', Result, Offset) then
+    Exit;
+
+  if (FParams.Count > 1) and (CompareVar.VarType is TLapeType_DynArray) then
+  begin
+    Result := SortWeighted(ArrayVar, CompareVar);
+    Exit;
+  end;
+
+  ResultType := FCompiler.getBaseType(ltInt32);
+  ArrayType := TLapeType_DynArray(ArrayVar.VarType).PType;
+
+  if (FParams.Count > 1) then
+  begin
+    if (not FParams[1].CompileToTempVar(Offset, CompareVar)) then
+      LapeException(lpeInvalidCompareMethod, DocPos);
+    if (not (CompareVar.VarType is TLapeType_Method)) then
+      LapeException(lpeInvalidCompareMethod, DocPos);
+
+    with TLapeType_Method(CompareVar.VarType) do
+    begin
+      if not (
+          (Params.Count = 2) and
+          (ResultType.Equals(Res)) and
+          (ArrayType.Equals(Params[0].VarType)) and
+          (ArrayType.Equals(Params[1].VarType)) and
+          (Params[0].ParType = lptConstRef) and
+          (Params[1].ParType = lptConstRef)
+      ) then
+        LapeException(lpeInvalidCompareMethod, DocPos);
+    end;
+
+    CompareVar.VarType := FCompiler.getGlobalType('_TCompareFunc');
+  end else
+    CompareVar := GetMagicMethodOrNil(FCompiler, '_Compare', [ArrayType, ArrayType], ResultType);
+
+  case ArrayVar.VarType.BaseType of
+    ltStaticArray:
+      begin
+        with TLapeTree_Operator.Create(op_Addr, Self) do
+        try
+          Left := TLapeTree_Operator.Create(op_Index, Self);
+
+          TLapeTree_Operator(Left).Left := TLapeTree_ResVar.Create(ArrayVar.IncLock(), Self);
+          TLapeTree_Operator(Left).Right := TLapeTree_GlobalVar.Create(ArrayVar.VarType.VarLo(), Self);
+
+          ArrayPointer := Compile(Offset);
+        finally
+          ArrayVar.DecLock(1);
+
+          Free();
+        end;
+      end;
+
+    ltDynArray:
+      begin
+        ArrayPointer := ArrayVar;
+        ArrayPointer.VarType := FCompiler.getBaseType(ltPointer);
+      end;
+    else
+      LapeException(lpeExpectedArray, DocPos);
+  end;
 
   try
-    // Check if user defined `_Sort` exists. Useful for providing a native method
-    if InvokeMagicMethod(Self, '_Sort', Result, Offset) then
-      Exit;
-
-    if (FParams.Count > 1) and (CompareVar.VarType is TLapeType_DynArray) then
-    begin
-      Result := SortWeighted(ArrayVar, CompareVar);
-      Exit;
-    end;
-
-    ResultType := FCompiler.getBaseType(ltInt32);
-    ArrayType := TLapeType_DynArray(ArrayVar.VarType).PType;
-
-    if (FParams.Count > 1) then
-    begin
-      if (not FParams[1].CompileToTempVar(Offset, CompareVar)) then
-        LapeException(lpeInvalidCompareMethod, DocPos);
-      if (not (CompareVar.VarType is TLapeType_Method)) then
-        LapeException(lpeInvalidCompareMethod, DocPos);
-
-      with TLapeType_Method(CompareVar.VarType) do
-      begin
-        if not (
-            (Params.Count = 2) and
-            (ResultType.Equals(Res)) and
-            (ArrayType.Equals(Params[0].VarType)) and
-            (ArrayType.Equals(Params[1].VarType)) and
-            (Params[0].ParType = lptConstRef) and
-            (Params[1].ParType = lptConstRef)
-        ) then
-          LapeException(lpeInvalidCompareMethod, DocPos);
-      end;
-
-      CompareVar.VarType := FCompiler.addManagedType(CompareVar.VarType.CreateCopy(True));
-      with TLapeType_Method(CompareVar.VarType) do
-      begin
-        Params.Clear();
-        Params.Add(CompareParameter);
-        Params.Add(CompareParameter);
-      end;
-    end else
-      CompareVar := GetMagicMethodOrNil(FCompiler, '_Compare', [ArrayType, ArrayType], ResultType);
-
-    case ArrayVar.VarType.BaseType of
-      ltStaticArray:
-        begin
-          with TLapeTree_Operator.Create(op_Addr, Self) do
-          try
-            Left := TLapeTree_Operator.Create(op_Index, Self);
-
-            TLapeTree_Operator(Left).Left := TLapeTree_ResVar.Create(ArrayVar.IncLock(), Self);
-            TLapeTree_Operator(Left).Right := TLapeTree_GlobalVar.Create(ArrayVar.VarType.VarLo(), Self);
-
-            ArrayPointer := Compile(Offset);
-          finally
-            ArrayVar.DecLock(1);
-
-            Free();
-          end;
-        end;
-
-      ltDynArray:
-        begin
-          ArrayPointer := ArrayVar;
-          ArrayPointer.VarType := FCompiler.getBaseType(ltPointer);
-        end;
-      else
-        LapeException(lpeExpectedArray, DocPos);
-    end;
-
+    // _Sort(p: Pointer; ElSize, Hi: SizeInt; Compare: function(constref A, B): Int32);
+    with TLapeTree_Invoke.Create('_Sort', Self) do
     try
-      // _Sort(p: Pointer; ElSize, Hi: SizeInt; Compare: function(constref p, B): Int32);
-      with TLapeTree_Invoke.Create('_Sort', Self) do
-      try
-        addParam(TLapeTree_ResVar.Create(ArrayPointer.IncLock(), Self));
-        addParam(TLapeTree_Integer.Create(ArrayType.Size, Self));
+      addParam(TLapeTree_ResVar.Create(ArrayPointer.IncLock(), Self));
+      addParam(TLapeTree_Integer.Create(ArrayType.Size, Self));
 
-        case ArrayVar.VarType.BaseType of
-          ltStaticArray:
-            with TLapeType_StaticArray(ArrayVar.VarType) do
-              addParam(TLapeTree_Integer.Create(Range.Hi - Range.Lo, Self));
+      case ArrayVar.VarType.BaseType of
+        ltStaticArray:
+          with TLapeType_StaticArray(ArrayVar.VarType) do
+            addParam(TLapeTree_Integer.Create(Range.Hi - Range.Lo, Self));
 
-          ltDynArray:
-            addParam(TLapeTree_Integer.Create(-1, Self));
-        end;
-
-        addParam(TLapeTree_ResVar.Create(CompareVar.IncLock(), Self));
-
-        Compile(Offset).Spill(1);
-      finally
-        Free();
+        ltDynArray:
+          addParam(TLapeTree_Integer.Create(-1, Self));
       end;
+
+      addParam(TLapeTree_ResVar.Create(CompareVar.IncLock(), Self));
+
+      Compile(Offset).Spill(1);
     finally
-      CompareVar.Spill(1);
-      ArrayPointer.Spill(1);
-      ArrayVar.Spill(1);
+      Free();
     end;
   finally
-    if ArrayWasConstant then
-      ArrayVar.isConstant := True;
+    CompareVar.Spill(1);
+    ArrayPointer.Spill(1);
+    ArrayVar.Spill(1);
   end;
 end;
 
@@ -1285,6 +1278,7 @@ begin
     addParam(Self.FParams[0]);
 
     Result := Compile(Offset);
+    Result.isConstant := False;
   finally
     Free();
   end;
@@ -1414,7 +1408,7 @@ end;
 function TLapeTree_InternalMethod_IndicesOf.resType: TLapeType;
 begin
   if (FResType = nil) then
-    FResType := FCompiler.addManagedType(TLapeType_DynArray.Create(FCompiler.getBaseType(ltInt32), FCompiler));
+    FResType := FCompiler.getIntegerArray();
 
   Result := inherited;
 end;
@@ -1744,6 +1738,79 @@ begin
 
     Result := Compile(Offset);
   finally
+    Free();
+  end;
+end;
+
+function TLapeTree_InternalMethod_Remove.resType: TLapeType;
+begin
+  if (FResType = nil) then
+    FResType := FCompiler.getBaseType(ltEvalBool);
+
+  Result := inherited;
+end;
+
+function TLapeTree_InternalMethod_Remove.Compile(var Offset: Integer): TResVar;
+var
+  ItemVar, ArrayVar, IndexVar: TResVar;
+begin
+  Result := NullResVar;
+  Dest := NullResVar;
+
+  if (resType() = nil) then
+    LapeException(lpeImpossible, DocPos);
+
+  if (not FParams[0].CompileToTempVar(Offset, ItemVar)) then
+    LapeException(lpeInvalidEvaluation, DocPos);
+  if (not FParams[1].CompileToTempVar(Offset, ArrayVar)) then
+    LapeException(lpeInvalidEvaluation, DocPos);
+
+  if (ArrayVar.VarType.BaseType <> ltDynArray) then
+    LapeException(lpeExpectedDynamicArray, DocPos);
+
+  with TLapeTree_InternalMethod_IndexOf.Create(Self) do
+  try
+    addParam(TLapeTree_ResVar.Create(ItemVar.IncLock(), Self));
+    addParam(TLapeTree_ResVar.Create(ArrayVar.IncLock(), Self));
+
+    IndexVar := Compile(Offset).IncLock();
+  finally
+    Free();
+  end;
+
+  Result := _ResVar.New(FCompiler.getTempVar(ltEvalBool));
+  with TLapeTree_Operator.Create(op_Assign, Self) do
+  try
+    Left := TLapeTree_ResVar.Create(Result.IncLock(), Self);
+    Right := TLapeTree_Operator.Create(op_cmp_GreaterThan, Self);
+    with TLapeTree_Operator(Right) do
+    begin
+      Left := TLapeTree_ResVar.Create(IndexVar.IncLock(), Self);
+      Right := TLapeTree_ResVar.Create(_ResVar.New(FCompiler.getConstant(-1)), Self);
+    end;
+
+    Result := Compile(Offset).IncLock();
+  finally
+    IndexVar.DecLock(1);
+
+    Free();
+  end;
+
+  with TLapeTree_If.Create(Self) do
+  try
+    Condition := TLapeTree_ResVar.Create(Result.IncLock(), Self);
+    Body := TLapeTree_InternalMethod_Delete.Create(Self);
+    with TLapeTree_InternalMethod_Delete(Body) do
+    begin
+      addParam(TLapeTree_ResVar.Create(ArrayVar.IncLock(), Self));
+      addParam(TLapeTree_ResVar.Create(IndexVar.IncLock(), Self));
+      addParam(TLapeTree_ResVar.Create(_ResVar.New(FCompiler.getConstant(1)), Self));
+    end;
+
+    Compile(Offset).Spill(1);
+  finally
+    IndexVar.DecLock(1);
+
     Free();
   end;
 end;
@@ -2630,8 +2697,13 @@ function TLapeTree_Invoke.ResolveOverload(Overloaded: TLapeType_OverloadedMethod
 var
   MethodIndex: Integer;
   IndexOperator: TLapeTree_Operator;
+  ObjectType: TLapeType;
 begin
-  MethodIndex := Overloaded.getMethodIndex(getParamTypes(), ExpectType);
+  ObjectType := nil;
+  if (FExpr is TLapeTree_Operator) and (TLapeTree_Operator(FExpr).Left <> nil) then
+    ObjectType := TLapeTree_Operator(FExpr).Left.resType();
+
+  MethodIndex := Overloaded.getMethodIndex(getParamTypes(), ExpectType, ObjectType);
   if (MethodIndex < 0) then
     MethodIndex := CastOpenArrays();
 
@@ -3362,8 +3434,12 @@ var
       end;
   end;
 
+var
+  Pos: TDocPos;
+  TempVar, TempSelfVar, TempSelfAddrVar: TResVar;
 begin
   Result := NullResVar;
+
   IdentExpr := RealIdent;
   Assert(IdentExpr <> nil);
 
@@ -3371,6 +3447,10 @@ begin
     Result := DoCast()
   else
   begin
+    TempVar := NullResVar;
+    TempSelfVar := NullResVar;
+    TempSelfAddrVar := NullResVar;
+
     IdentVar := IdentExpr.Compile(Offset);
 
     if (lcoHints in FCompilerOptions) and (IdentVar.VarType is TLapeType_Method) and (TLapeType_Method(IdentVar.VarType).HintDirectives <> []) then
@@ -3386,12 +3466,6 @@ begin
           LapeExceptionFmt(lpeNoOverloadedMethod, [getParamTypesStr()], IdentExpr.DocPos);
       end else
         LapeException(lpeCannotInvoke, IdentExpr.DocPos);
-
-    if (IdentVar.VarType is TLapeType_MethodOfType) and
-       (not (TLapeType_MethodOfType(IdentVar.VarType).SelfParam in Lape_ValParams)) and
-       (not IdentVar.Readable)
-    then
-      LapeException(lpeVariableExpected, IdentExpr.DocPos);
 
     if (lcoInitExternalResult in FCompilerOptions) then
       Dest := NullResVar;
@@ -3409,12 +3483,38 @@ begin
 
       if (IdentVar.VarType is TLapeType_MethodOfObject) and (IdentVar.VarPos.MemPos <> mpStack) then
       begin
-        Result := IdentVar;
-        Result.VarType := FCompiler.getBaseType(ltPointer);
+        if (IdentVar.VarType is TLapeType_MethodOfType) and (FExpr is TLapeTree_GlobalVar) then
+          LapeExceptionFmt(lpeStaticMethodExpected, [GetMethodName(TLapeTree_GlobalVar(FExpr).GlobalVar.VarType)], Expr.DocPos);
 
-        Result.IncOffset(SizeOf(Pointer));
-        AssignToStack(Result, IdentExpr.DocPos, False);
-        Result.DecOffset(SizeOf(Pointer));
+        if (IdentVar.VarType is TLapeType_MethodOfType) and
+           (not (TLapeType_MethodOfType(IdentVar.VarType).SelfParam in Lape_ValParams)) and
+           (not IdentVar.Readable) then
+        begin
+          Pos := IdentExpr.DocPos;
+
+          TempSelfVar := _ResVar.New(FCompiler.getTempVar(TLapeType_MethodOfType(IdentVar.VarType).ObjectType));
+
+          Result := IdentVar;
+          Result.VarType := FCompiler.GetPointerType(TempSelfVar.VarType, False);
+          Result.IncOffset(SizeOf(Result.VarType));
+
+          // TempSelfVar := Self^
+          // TempSelfAddrVar := @TempSelfVar
+          TempSelfVar := Result.VarType.Eval(op_Deref, TempVar, Result, NullResVar, [], Offset, @Pos);
+          TempSelfAddrVar := TempSelfVar.VarType.Eval(op_Addr, TempVar, TempSelfVar, NullResVar, [], Offset, @Pos);
+
+          AssignToStack(TempSelfAddrVar, Pos, False);
+
+          Result.DecOffset(SizeOf(Pointer));
+        end else
+        begin
+          Result := IdentVar;
+          Result.VarType := FCompiler.getBaseType(ltPointer);
+
+          Result.IncOffset(SizeOf(Pointer));
+          AssignToStack(Result, IdentExpr.DocPos, False);
+          Result.DecOffset(SizeOf(Pointer));
+        end;
       end;
 
       SetLength(ParamVars, Params.Count);
@@ -3449,6 +3549,11 @@ begin
     IdentVar.Spill(1);
     for i := 0 to High(ParamVars) do
       ParamVars[i].Spill(1);
+
+    if (TempSelfVar.VarPos.MemPos <> NullResVar.VarPos.MemPos) then
+      TempSelfVar.Spill(1);
+    if (TempSelfAddrVar.VarPos.MemPos <> NullResVar.VarPos.MemPos) then
+      TempSelfAddrVar.Spill(1);
   end;
 end;
 
@@ -4619,12 +4724,12 @@ begin
 
         if (ParRes.VarType is TLapeType_StaticArray) then
         begin
-          Lo := TLapeTree_InternalMethod_Low.Create(Self);
-          Lo.AddParam(TLapeTree_ResVar.Create(ParRes.IncLock(), Self.FParams[0]));
-
           if not isEmpty(Start) then
           begin
             TLapeType_StaticArray(ParRes.VarType).RangeCheck(ParRes, StartRes, [lefRangeCheck], Offset);
+
+            Lo := TLapeTree_InternalMethod_Low.Create(Self);
+            Lo.AddParam(TLapeTree_ResVar.Create(ParRes.IncLock(), Self.FParams[0]));
 
             TmpExpr := TLapeTree_Operator.Create(op_Minus, Self);
             with TLapeTree_Operator(TmpExpr) do
