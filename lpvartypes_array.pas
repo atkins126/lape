@@ -795,8 +795,7 @@ end;
 
 procedure TLapeType_DynArray.addArrayHelper(Helper: TLapeType_HelperClass; AName: String);
 begin
-  if (not (lcoArrayHelpers in FCompiler.Options)) or HasChild(AName) then
-    Exit;
+  Assert(lcoArrayHelpers in FCompiler.Options);
 
   FManagedDecls.addDeclaration(
     TLapeType_Helper(FCompiler.addManagedType(Helper.Create(FCompiler))).NewGlobalVar(AName)
@@ -805,10 +804,14 @@ end;
 
 procedure TLapeType_DynArray.addArrayHelpers;
 begin
+  if (not (lcoArrayHelpers in FCompiler.Options)) then
+    Exit;
+
   addArrayHelper(TLapeType_ArrayHelper_Low, 'Low');
   addArrayHelper(TLapeType_ArrayHelper_High, 'High');
   addArrayHelper(TLapeType_ArrayHelper_Contains, 'Contains');
   addArrayHelper(TLapeType_ArrayHelper_Remove, 'Remove');
+  addArrayHelper(TLapeType_ArrayHelper_RemoveAll, 'RemoveAll');
   addArrayHelper(TLapeType_ArrayHelper_Delete, 'Delete');
   addArrayHelper(TLapeType_ArrayHelper_Insert, 'Insert');
   addArrayHelper(TLapeType_ArrayHelper_Swap, 'Swap');
@@ -829,6 +832,16 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_Clear, 'Clear');
   addArrayHelper(TLapeType_ArrayHelper_Append, 'Append');
   addArrayHelper(TLapeType_ArrayHelper_Extend, 'Extend');
+  addArrayHelper(TLapeType_ArrayHelper_Slice, 'Slice');
+
+  addArrayHelper(TLapeType_ArrayHelper_Median, 'Median');
+  addArrayHelper(TLapeType_ArrayHelper_Mode, 'Mode');
+  addArrayHelper(TLapeType_ArrayHelper_Min, 'Min');
+  addArrayHelper(TLapeType_ArrayHelper_Max, 'Max');
+  addArrayHelper(TLapeType_ArrayHelper_Sum, 'Sum');
+  addArrayHelper(TLapeType_ArrayHelper_Mean, 'Mean');
+  addArrayHelper(TLapeType_ArrayHelper_Variance, 'Variance');
+  addArrayHelper(TLapeType_ArrayHelper_Stddev, 'Stddev');
 end;
 
 function TLapeType_StaticArray.getPadding: SizeInt;
@@ -1188,6 +1201,9 @@ end;
 
 procedure TLapeType_StaticArray.addArrayHelpers;
 begin
+  if (not (lcoArrayHelpers in FCompiler.Options)) then
+    Exit;
+
   addArrayHelper(TLapeType_ArrayHelper_Low, 'Low');
   addArrayHelper(TLapeType_ArrayHelper_High, 'High');
   addArrayHelper(TLapeType_ArrayHelper_Contains, 'Contains');
@@ -1202,6 +1218,16 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
   addArrayHelper(TLapeType_ArrayHelper_RandomValue, 'RandomValue');
   addArrayHelper(TLapeType_ArrayHelper_Reversed, 'Reversed');
+  addArrayHelper(TLapeType_ArrayHelper_Slice, 'Slice');
+
+  addArrayHelper(TLapeType_ArrayHelper_Median, 'Median');
+  addArrayHelper(TLapeType_ArrayHelper_Mode, 'Mode');
+  addArrayHelper(TLapeType_ArrayHelper_Min, 'Min');
+  addArrayHelper(TLapeType_ArrayHelper_Max, 'Max');
+  addArrayHelper(TLapeType_ArrayHelper_Sum, 'Sum');
+  addArrayHelper(TLapeType_ArrayHelper_Mean, 'Mean');
+  addArrayHelper(TLapeType_ArrayHelper_Variance, 'Variance');
+  addArrayHelper(TLapeType_ArrayHelper_Stddev, 'Stddev');
 end;
 
 function TLapeType_String.VarToString(AVar: Pointer): lpString;
@@ -1322,6 +1348,9 @@ end;
 
 procedure TLapeType_String.addArrayHelpers;
 begin
+  if (not (lcoArrayHelpers in FCompiler.Options)) then
+    Exit;
+
   addArrayHelper(TLapeType_ArrayHelper_SetLength, 'SetLength');
   addArrayHelper(TLapeType_ArrayHelper_Length, 'Length');
   addArrayHelper(TLapeType_ArrayHelper_Copy, 'Copy');

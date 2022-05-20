@@ -113,6 +113,10 @@ type
     function GetDisposeMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetCopyMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetCompareMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
+
+    function GetGreaterThanMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
+    function GetLessThanMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
+
     function GetEqualsMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetToStringMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetIsEnumGapMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
@@ -289,6 +293,7 @@ uses
   Variants,
   {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
   lpvartypes_ord, lpvartypes_record, lpvartypes_array,
+  lpinternalmethods_algorithm,
   lpmessages, lpeval, lpinterpreter;
 
 function TLapeCompiler.getPDocPos: PDocPos;
@@ -611,79 +616,70 @@ end;
 function TLapeCompiler.GetCompareMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar;
 var
   Method: TLapeTree_Method;
-  Statement: TLapeTree_If;
-  Assign: TLapeTree_Operator;
-  LeftVar, RightVar, ResultVar: TResVar;
+  Header: TLapeType_Method;
 begin
   Result := nil;
-  Method := nil;
-  GetMethod_FixupParams(AType, AParams, AResult);
   if (Sender = nil) or (Length(AParams) <> 2) or (AParams[0] = nil) or (AParams[1] = nil) or (AResult = nil) then
     Exit;
 
-  if (AType = nil) then
-    AType := addManagedType(TLapeType_Method.Create(Self, [AParams[0], AParams[1]], [lptConstRef, lptConstRef], [TLapeGlobalVar(nil), TLapeGlobalVar(nil)], AResult)) as TLapeType_Method;
+  Header := addManagedType(TLapeType_Method.Create(Self, [AParams[0], AParams[1]], [lptConstRef, lptConstRef], [TLapeGlobalVar(nil), TLapeGlobalVar(nil)], AResult)) as TLapeType_Method;
+  Method := addGlobalFunc(Header,
+    'CompareMethod',
+    'begin'                     + LineEnding +
+    '  if Param0 > Param1 then' + LineEnding +
+    '    Result := 1'           + LineEnding +
+    '  else'                    + LineEnding +
+    '  if Param0 < Param1 then' + LineEnding +
+    '    Result := -1'          + LineEnding +
+    '  else'                    + LineEnding +
+    '    Result := 0;'          + LineEnding +
+    'end;');
 
-  IncStackInfo();
-  try
-    Result := AType.NewGlobalVar(EndJump);
-    Sender.addMethod(Result);
+  Result := Method.Method;
 
-    Method := TLapeTree_Method.Create(Result, FStackInfo, Self);
-    Method.Statements := TLapeTree_StatementList.Create(Self);
+  Sender.addMethod(Result);
+end;
 
-    LeftVar := _ResVar.New(FStackInfo.addVar(lptConstRef, nil, 'Left')).IncLock();
-    RightVar := _ResVar.New(FStackInfo.addVar(lptConstRef, nil, 'Right')).IncLock();
-    ResultVar := _ResVar.New(FStackInfo.addVar(lptOut, AResult, 'Result')).IncLock();
+function TLapeCompiler.GetGreaterThanMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType; AParams: TLapeTypeArray; AResult: TLapeType): TLapeGlobalVar;
+var
+  Method: TLapeTree_Method;
+  Header: TLapeType_Method;
+begin
+  Result := nil;
+  if (Sender = nil) or (Length(AParams) <> 2) or (AParams[0] = nil) or (AParams[1] = nil) or (AResult = nil) then
+    Exit;
 
-    LeftVar.VarType := AParams[0];
-    RightVar.VarType := AParams[1];
+  Header := addManagedType(TLapeType_Method.Create(Self, [AParams[0], AParams[1]], [lptConstRef, lptConstRef], [TLapeGlobalVar(nil), TLapeGlobalVar(nil)], getBaseType(ltEvalBool))) as TLapeType_Method;
+  Method := addGlobalFunc(Header,
+    'GreaterThanMethod',
+    'begin'                        + LineEnding +
+    '  Result := Param0 > Param1;' + LineEnding +
+    'end;');
 
-    // op_cmp_LessThan
-    Statement := TLapeTree_If.Create(Self);
-    Statement.Condition := TLapeTree_Operator.Create(op_cmp_LessThan, Self);
-    with TLapeTree_Operator(Statement.Condition) do
-    begin
-      Left := TLapeTree_ResVar.Create(LeftVar.IncLock(), Self);
-      Right := TLapeTree_ResVar.Create(RightVar.IncLock(), Self);
-    end;
-    Statement.Body := TLapeTree_InternalMethod_Exit.Create(Method);
-    with TLapeTree_InternalMethod_Exit(Statement.Body) do
-      addParam(TLapeTree_Integer.Create(-1, Statement.Body));
+  Result := Method.Method;
 
-    Method.Statements.addStatement(Statement);
+  Sender.addMethod(Result);
+end;
 
-    // op_cmp_GreaterThan
-    Statement := TLapeTree_If.Create(Self);
-    Statement.Condition := TLapeTree_Operator.Create(op_cmp_GreaterThan, Self);
-    with TLapeTree_Operator(Statement.Condition) do
-    begin
-      Left := TLapeTree_ResVar.Create(LeftVar.IncLock(), Self);
-      Right := TLapeTree_ResVar.Create(RightVar.IncLock(), Self);
-    end;
-    Statement.Body := TLapeTree_InternalMethod_Exit.Create(Method);
-    with TLapeTree_InternalMethod_Exit(Statement.Body) do
-      addParam(TLapeTree_Integer.Create(1, Statement.Body));
+function TLapeCompiler.GetLessThanMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType; AParams: TLapeTypeArray; AResult: TLapeType): TLapeGlobalVar;
+var
+  Method: TLapeTree_Method;
+  Header: TLapeType_Method;
+begin
+  Result := nil;
+  if (Sender = nil) or (Length(AParams) <> 2) or (AParams[0] = nil) or (AParams[1] = nil) or (AResult = nil) then
+    Exit;
 
-    Method.Statements.addStatement(Statement);
+  Header := addManagedType(TLapeType_Method.Create(Self, [AParams[0], AParams[1]], [lptConstRef, lptConstRef], [TLapeGlobalVar(nil), TLapeGlobalVar(nil)], getBaseType(ltEvalBool))) as TLapeType_Method;
+  Method := addGlobalFunc(Header,
+    'LessThanMethod',
+    'begin'                        + LineEnding +
+    '  Result := Param0 < Param1;' + LineEnding +
+    'end;');
 
-    // op_cmp_Equal
-    if (not (lcoAlwaysInitialize in Method.CompilerOptions)) then
-    begin
-      Assign := TLapeTree_Operator.Create(op_Assign, Self);
-      with Assign do
-      begin
-        Left := TLapeTree_ResVar.Create(ResultVar.IncLock(), Self);
-        Right := TLapeTree_Integer.Create(0, Assign);
-      end;
+  Result := Method.Method;
 
-      Method.Statements.addStatement(Assign);
-    end;
-
-    addDelayedExpression(Method);
-  finally
-    DecStackInfo(True, False, Method = nil);
-  end;
+  Sender.addMethod(Result);
 end;
 
 function TLapeCompiler.GetEqualsMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar;
@@ -1033,6 +1029,8 @@ begin
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetDisposeMethod).NewGlobalVar('_Dispose'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetCopyMethod).NewGlobalVar('_Assign'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetCompareMethod).NewGlobalVar('_Compare'));
+  addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetLessThanMethod).NewGlobalVar('_LessThan'));
+  addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetGreaterThanMethod).NewGlobalVar('_GreaterThan'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetEqualsMethod).NewGlobalVar('_Equals'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetIsEnumGapMethod).NewGlobalVar('_IsEnumGap'));
 
@@ -1044,6 +1042,8 @@ begin
 
   addDelayedCode(
     LapeDelayedFlags +
+    LapeDelayedTypes +
+    LapeDelayedForwards +
     _LapeToString_Enum +
     Format(_LapeToString_Set, ['Small', Ord(High(ELapeSmallEnum))]) +
     Format(_LapeToString_Set, ['Large', Ord(High(ELapeLargeEnum))]) +
@@ -1052,10 +1052,15 @@ begin
     _LapeSetLength +
     _LapeCopy +
     _LapeDelete +
+    _LapeDeleteIndex +
+    _LapeDeleteIndices +
     _LapeInsert +
     _LapeSort +
     _LapeIndexOf +
-    _LapeUnique,
+    _LapeArrayUnique +
+    _LapeArrayMode +
+    _LapeArrayMinMax +
+    _LapeArraySlice,
     '!addDelayedCore'
   );
 
@@ -1198,9 +1203,6 @@ function TLapeCompiler.HandleDirective(Sender: TLapeTokenizerBase; Directive, Ar
     if (Name = 'assertions') then
       Result := (lcoAssertions in FOptions)
     else
-    if (Name = 'arrayhelpers') then
-      Result := (lcoArrayHelpers in FOptions)
-    else
     if (Name = 'rangechecks') then
       Result := (lcoRangeCheck in FOptions)
     else
@@ -1239,6 +1241,9 @@ function TLapeCompiler.HandleDirective(Sender: TLapeTokenizerBase; Directive, Ar
     else
     if (Name = 'autoobjectify') then
       Result := (lcoAutoObjectify in FOptions)
+    else
+    if (Name = 'explictself') then
+      Result := (lcoExplictSelf in FOptions)
     else
     if (Name = 'duplicatelocalnamehints') then
       Result := (lcoDuplicateLocalNameHints in FOptions);
@@ -1517,14 +1522,14 @@ begin
     if (Directive = 'h') or (Directive = 'hints') then
       setOption(lcoHints)
     else
-    if (Directive = 'arrayhelpers') then
-      setOption(lcoArrayHelpers)
-    else
     if (Directive = 'coperators') then
       setOption(lcoCOperators)
     else
     if (Directive = 'autoobjectify') then
       setOption(lcoAutoObjectify)
+    else
+    if (Directive = 'explictself') then
+      setOption(lcoExplictSelf)
     else
     if (Directive = 'duplicatelocalnamehints') then
       setOption(lcoDuplicateLocalNameHints)
@@ -2055,9 +2060,14 @@ begin
       if (FuncHeader is TLapeType_MethodOfType) then
       begin
         Result.SelfVar := _ResVar.New(FStackInfo.Vars[0]);
-        SelfWith.WithType := TLapeType_MethodOfType(FuncHeader).ObjectType;
-        SelfWith.WithVar := @Result.SelfVar;
-        FStackInfo.Owner.addWith(SelfWith);
+
+        if (not (lcoExplictSelf in FOptions)) then
+        begin
+          SelfWith.WithType := TLapeType_MethodOfType(FuncHeader).ObjectType;
+          SelfWith.WithVar := @Result.SelfVar;
+
+          FStackInfo.Owner.addWith(SelfWith);
+        end;
       end;
     end;
 
@@ -2223,6 +2233,13 @@ begin
 
       if (FuncForwards <> nil) and (OldDeclaration is TLapeGlobalVar) then
         FuncForwards.DeleteItem(TLapeGlobalVar(OldDeclaration));
+
+      if (lcoExplictSelf in FOptions) and ResetStack then
+      begin
+        SetStackOwner(nil).Free();
+
+        ResetStack := False;
+      end;
 
       Next();
       Result.Statements := ParseBlockList();
@@ -3764,6 +3781,7 @@ begin
   FInternalMethodMap['IndicesOf'] := TLapeTree_InternalMethod_IndicesOf;
   FInternalMethodMap['Contains'] := TLapeTree_InternalMethod_Contains;
   FInternalMethodMap['Remove'] := TLapeTree_InternalMethod_Remove;
+  FInternalMethodMap['RemoveAll'] := TLapeTree_InternalMethod_RemoveAll;
 
   FInternalMethodMap['Ord'] := TLapeTree_InternalMethod_Ord;
   FInternalMethodMap['Succ'] := TLapeTree_InternalMethod_Succ;
@@ -3778,6 +3796,17 @@ begin
 
   FInternalMethodMap['Objectify'] := TLapeTree_InternalMethod_Objectify;
   FInternalMethodMap['IsEnumGap'] := TLapeTree_InternalMethod_IsEnumGap;
+
+  FInternalMethodMap['ArrayMin'] := TLapeTree_InternalMethod_ArrayMin;
+  FInternalMethodMap['ArrayMax'] := TLapeTree_InternalMethod_ArrayMax;
+  FInternalMethodMap['ArrayMedian'] := TLapeTree_InternalMethod_ArrayMedian;
+  FInternalMethodMap['ArrayMode'] := TLapeTree_InternalMethod_ArrayMode;
+  FInternalMethodMap['ArraySum'] := TLapeTree_InternalMethod_ArraySum;
+  FInternalMethodMap['ArrayMean'] := TLapeTree_InternalMethod_ArrayMean;
+  FInternalMethodMap['ArrayVariance'] := TLapeTree_InternalMethod_ArrayVariance;
+  FInternalMethodMap['ArrayStdev'] := TLapeTree_InternalMethod_ArrayStdev;
+
+  FInternalMethodMap['Slice'] := TLapeTree_InternalMethod_Slice;
 
   setTokenizer(ATokenizer);
   Reset();
@@ -3882,7 +3911,7 @@ begin
   if (not hasTokenizer()) then
     SetLength(FTokenizers, 1);
 
-  if Importing and ((FTokenizers[0] = nil) or (FTokenizers[0].PeekNoJunk() in [tk_NULL, tk_sym_SemiColon])) then
+  if Importing and (FTokenizers[0] = nil) then
     Result := nil
   else
   begin
@@ -4049,28 +4078,11 @@ function TLapeCompiler.Compile: Boolean;
     end;
   end;
 
-  // Can be created before CompilerOptions are set
-  procedure ArrayHelpers;
-  var
-    BaseType: ELapeBaseType;
-    Decls: TLapeDeclArray;
-    i: Integer;
-  begin
-    for BaseType in LapeBaseTypes do
-      if FBaseTypes[BaseType] is TLapeType_DynArray then
-        TLapeType_DynArray(FBaseTypes[BaseType]).addArrayHelpers();
-
-    Decls := GlobalDeclarations.GetByClass(TLapeType_DynArray, bFalse);
-    for i := 0 to High(Decls) do
-      TLapeType_DynArray(Decls[i]).addArrayHelpers();
-  end;
-
 begin
   Result := False;
   try
 
     Reset();
-    ArrayHelpers();
     IncStackInfo(True);
     FTree := ParseFile();
     if (FTree = nil) and (FDelayedTree.GlobalCount(False) <= 0) then

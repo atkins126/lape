@@ -31,15 +31,16 @@ type
     lcoHints,                          // {$H} {$HINTS}
     lcoCOperators,                     //      {$COPERATORS}
     lcoAutoObjectify,                  //      {$AUTOOBJECTIFY}
-    lcoArrayHelpers,                   //      {$ARRAYHELPERS}
+    lcoExplictSelf,                    //      {$EXPLICTSELF}
     lcoDuplicateLocalNameHints,        //
+    lcoArrayHelpers,                   //
     lcoInitExternalResult              // Ensure empty result for external calls (useful for ffi)
   );
   ECompilerOptionsSet = set of ECompilerOption;
   PCompilerOptionsSet = ^ECompilerOptionsSet;
 
 const
-  Lape_OptionsDef = [lcoArrayHelpers, lcoAutoObjectify, lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress];
+  Lape_OptionsDef = [lcoArrayHelpers, lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress];
   Lape_PackRecordsDef = 8;
 
 type
@@ -615,6 +616,7 @@ type
 
   TLapeHint = procedure(Sender: TLapeCompilerBase; Msg: lpString) of object;
   TLapeBaseTypesDictionary = {$IFDEF FPC}specialize{$ENDIF}TLapeUniqueStringDictionary<TLapeType>;
+  TLapeCachedTypeVars = {$IFDEF FPC}specialize{$ENDIF}TLapeKeyValueList<Pointer, TLapeGlobalVar>;
 
   TLapeCompilerBase = class(TLapeBaseDeclClass)
   protected
@@ -626,6 +628,7 @@ type
     FGlobalDeclarations: TLapeDeclarationList;
     FManagedDeclarations: TLapeDeclarationList;
     FCachedDeclarations: array[ELapeBaseType] of TLapeVarMap;
+    FCachedTypeVars: TLapeCachedTypeVars;
 
     FBaseOptions: ECompilerOptionsSet;
     FBaseOptions_PackRecords: UInt8;
@@ -710,6 +713,8 @@ type
     property OnHint: TLapeHint read FOnHint write FOnHint;
   end;
 
+procedure RequireOperators(Compiler: TLapeCompilerBase; ops: array of EOperator; Typ: TLapeType; DocPos: TDocPos); overload;
+procedure RequireOperators(Compiler: TLapeCompilerBase; ops: array of EOperator; LeftType, RightType: TLapeType; DocPos: TDocPos); overload;
 function ResolveCompoundOp(op:EOperator; typ:TLapeType): EOperator;
 function getTypeArray(Arr: array of TLapeType): TLapeTypeArray;
 procedure ClearBaseTypes(var Arr: TLapeBaseTypes; DoFree: Boolean);
@@ -750,6 +755,51 @@ uses
   {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
   lpvartypes_ord, lpvartypes_array, lptree,
   lpmessages, lpeval, lpinterpreter;
+
+procedure RequireOperators(Compiler: TLapeCompilerBase; ops: array of EOperator; LeftType, RightType: TLapeType; DocPos: TDocPos);
+
+  function HasOperatorOverload(op: EOperator): Boolean;
+  var
+    Left, Right: TResVar;
+  begin
+    Result := False;
+
+    try
+      with TLapeTree_InternalMethod_Operator.Create(op, Compiler) do
+      try
+        Left := NullResVar;
+        Left.VarType := LeftType;
+        addParam(TLapeTree_ResVar.Create(Left, Compiler));
+
+        Right := NullResVar;
+        Right.VarType := RightType;
+        addParam(TLapeTree_ResVar.Create(Right, Compiler));
+
+        Result := resType() <> nil;
+      finally
+        Free();
+      end;
+    except
+    end;
+  end;
+
+var
+  i: Integer;
+begin
+  for i := 0 to High(ops) do
+  begin
+    if (LeftType.EvalRes(ops[i], RightType) = nil) and (not HasOperatorOverload(ops[i])) then
+      if (LeftType.Name <> '') then
+        LapeExceptionFmt(lpeOperatorRequiredForType, [op_str[ops[i]], LeftType.Name], DocPos)
+      else
+        LapeExceptionFmt(lpeOperatorRequiredForType, [op_str[ops[i]], LeftType.AsString], DocPos);
+  end;
+end;
+
+procedure RequireOperators(Compiler: TLapeCompilerBase; ops: array of EOperator; Typ: TLapeType; DocPos: TDocPos);
+begin
+  RequireOperators(Compiler, ops, Typ, Typ, DocPos);
+end;
 
 function ResolveCompoundOp(op:EOperator; typ:TLapeType): EOperator;
 begin
@@ -4011,8 +4061,8 @@ var
 begin
   inherited Create();
 
-  FBaseOptions := Lape_OptionsDef;
-  FBaseOptions_PackRecords := Lape_PackRecordsDef;
+  Options := Lape_OptionsDef;
+  Options_PackRecords := Lape_PackRecordsDef;
 
   FOnHint := nil;
   FStackInfo := nil;
@@ -4024,6 +4074,7 @@ begin
 
   FGlobalDeclarations := TLapeDeclarationList.Create(nil);
   FManagedDeclarations := TLapeDeclarationList.Create(nil);
+  FCachedTypeVars := TLapeCachedTypeVars.Create(nil, nil, dupAccept);
   for BaseType in LapeBaseTypes do
     FCachedDeclarations[BaseType] := TLapeVarMap.Create(nil, dupIgnore, True, '', True);
 
@@ -4048,6 +4099,7 @@ begin
   FreeAndNil(FBaseTypesDictionary);
   FreeAndNil(FGlobalDeclarations);
   FreeAndNil(FManagedDeclarations);
+  FreeAndNil(FCachedTypeVars);
   for BaseType in LapeBaseTypes do
     FreeAndNil(FCachedDeclarations[BaseType]);
 
@@ -4473,14 +4525,18 @@ begin
 end;
 
 function TLapeCompilerBase.getTypeVar(AType: TLapeType): TLapeGlobalVar;
-var
-  TType: TLapeTTypeClass;
 begin
-  if (AType is TLapeType_Enum) then
-    TType := TLapeType_TypeEnum
-  else
-    TType := TLapeType_Type;
-  Result := addManagedDecl(addManagedType(TType.Create(AType, Self)).NewGlobalVarP()) as TLapeGlobalVar;
+  Result := FCachedTypeVars[AType];
+
+  if (Result = nil) then
+  begin
+    if (AType is TLapeType_Enum) then
+      Result := addManagedDecl(addManagedType(TLapeType_TypeEnum.Create(AType, Self)).NewGlobalVarP()) as TLapeGlobalVar
+    else
+      Result := addManagedDecl(addManagedType(TLapeType_Type.Create(AType, Self)).NewGlobalVarP()) as TLapeGlobalVar;
+
+    FCachedTypeVars[AType] := Result;
+  end;
 end;
 
 function TLapeCompilerBase.getGlobalVar(AName: lpString): TLapeGlobalVar;
