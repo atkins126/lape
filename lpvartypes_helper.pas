@@ -17,6 +17,8 @@ type
   TLapeType_HelperClass = class of TLapeType_Helper;
   TLapeType_Helper = class(TLapeType_OverloadedMethod)
   protected
+    FHelperName: lpString;
+
     function FunctionNotFound(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
 
     function CreateFunction(Body: String; VarType: TLapeType; ParamTypes: array of TLapeType; ResultType: TLapeType = nil): TLapeGlobalVar;
@@ -264,6 +266,7 @@ var
   Header: TLapeType_Method;
   Param: TLapeParameter;
   i: Integer;
+  Pos: TDocPos;
 begin
   Assert(FCompiler is TLapeCompiler);
 
@@ -286,7 +289,9 @@ begin
       Header.addParam(Param);
     end;
 
-    Result := addGlobalFunc(Header, '!Helper', Body).Method;
+    Pos := DocPos;
+    Result := addGlobalFunc(Header, '!Helper', Body, @Pos).Method;
+    Result.VarType.Name := FHelperName;
 
     addMethod(Result);
   end;
@@ -294,7 +299,9 @@ end;
 
 constructor TLapeType_Helper.Create(ACompiler: TLapeCompilerBase; AName: lpString; ADocPos: PDocPos);
 begin
-  inherited Create(ACompiler, AName, ADocPos);
+  inherited Create(ACompiler, '', ADocPos);
+
+  FHelperName := AName;
 
   OnFunctionNotFound := @FunctionNotFound;
 end;
@@ -463,12 +470,16 @@ end;
 
 function TLapeType_ArrayHelper_Insert.GetFunction(VarType: TLapeType; AParams: TLapeTypeArray; AResult: TLapeType): TLapeGlobalVar;
 begin
+  Result := nil;
+  if Length(AParams) = 0 then
+    Exit;
+
   Result := CreateFunction(
     'begin'                                  + LineEnding +
     '  System.Insert(Param0, Self, Param1);' + LineEnding +
     'end;',
     VarType,
-    [TLapeType_DynArray(VarType).PType, FCompiler.getBaseType(ltSizeInt)]
+    [AParams[0], FCompiler.getBaseType(ltSizeInt)]
   );
 end;
 

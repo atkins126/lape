@@ -248,7 +248,7 @@ type
     function addGlobalType(Str: lpString; AName: lpString): TLapeType; overload; virtual;
 
     function addGlobalFunc(AHeader: lpString; Value: Pointer): TLapeGlobalVar; overload; virtual;
-    function addGlobalFunc(AHeader: TLapeType_Method; AName, Body: lpString): TLapeTree_Method; overload; virtual;
+    function addGlobalFunc(AHeader: TLapeType_Method; AName, Body: lpString; Pos: PDocPos = nil): TLapeTree_Method; overload; virtual;
     function addGlobalFunc(AParams: array of TLapeType; AParTypes: array of ELapeParameterType; AParDefaults: array of TLapeGlobalVar; ARes: TLapeType; Value: Pointer; AName: lpString): TLapeGlobalVar; overload; virtual;
     function addGlobalFunc(AParams: array of TLapeType; AParTypes: array of ELapeParameterType; AParDefaults: array of TLapeGlobalVar; Value: Pointer; AName: lpString): TLapeGlobalVar; overload; virtual;
 
@@ -523,6 +523,7 @@ begin
 
   try
     Result := addManagedDecl(AType.NewGlobalVar(EndJump)) as TLapeGlobalVar;
+    Result.VarType.Name := '_Objectify';
 
     Method := TLapeTree_Method.Create(Result, FStackInfo, Self);
     Method.Statements := TLapeTree_StatementList.Create(Method);
@@ -568,6 +569,7 @@ begin
   IncStackInfo();
   try
     Result := AType.NewGlobalVar(EndJump);
+    Result.VarType.Name := '_Dispose';
     Sender.addMethod(Result);
 
     Method := TLapeTree_Method.Create(Result, FStackInfo, Self);
@@ -598,6 +600,7 @@ begin
   IncStackInfo();
   try
     Result := AType.NewGlobalVar(EndJump);
+    Result.VarType.Name := '_Assign';
     Sender.addMethod(Result);
 
     Assignment := TLapeTree_Operator.Create(op_Assign, Self);
@@ -636,6 +639,7 @@ begin
     'end;');
 
   Result := Method.Method;
+  Result.VarType.Name := '_Compare';
 
   Sender.addMethod(Result);
 end;
@@ -657,6 +661,7 @@ begin
     'end;');
 
   Result := Method.Method;
+  Result.VarType.Name := '_GreaterThan';
 
   Sender.addMethod(Result);
 end;
@@ -678,6 +683,7 @@ begin
     'end;');
 
   Result := Method.Method;
+  Result.VarType.Name := '_LessThan';
 
   Sender.addMethod(Result);
 end;
@@ -700,6 +706,7 @@ begin
   IncStackInfo();
   try
     Result := AType.NewGlobalVar(EndJump);
+    Result.VarType.Name := '_Equals';
     Sender.addMethod(Result);
 
     Method := TLapeTree_Method.Create(Result, FStackInfo, Self);
@@ -746,6 +753,7 @@ begin
     AType := addManagedType(TLapeType_Method.Create(Self, [AParams[0]], [lptConstRef], [TLapeGlobalVar(nil)], AResult)) as TLapeType_Method;
 
   Result := AType.NewGlobalVar(@_LapeToString_Unknown);
+  Result.VarType.Name := '_ToString';
   Sender.addMethod(Result);
 
   Body := AParams[0].VarToStringBody(Sender);
@@ -798,6 +806,7 @@ begin
   IncStackInfo();
   try
     Result := AType.NewGlobalVar(EndJump);
+    Result.VarType.Name := '_IsEnumGap';
     Sender.addMethod(Result);
 
     Method := TLapeTree_Method.Create(Result, FStackInfo, Self);
@@ -1242,11 +1251,14 @@ function TLapeCompiler.HandleDirective(Sender: TLapeTokenizerBase; Directive, Ar
     if (Name = 'autoobjectify') then
       Result := (lcoAutoObjectify in FOptions)
     else
-    if (Name = 'explictself') then
-      Result := (lcoExplictSelf in FOptions)
+    if (Name = 'explicitself') then
+      Result := (lcoExplicitSelf in FOptions)
     else
     if (Name = 'duplicatelocalnamehints') then
-      Result := (lcoDuplicateLocalNameHints in FOptions);
+      Result := (lcoDuplicateLocalNameHints in FOptions)
+    else
+    if (Name = 'verbosecompile') then
+      Result := (lcoVerboseCompile in FOptions);
   end;
 
   procedure switchConditional;
@@ -1528,11 +1540,14 @@ begin
     if (Directive = 'autoobjectify') then
       setOption(lcoAutoObjectify)
     else
-    if (Directive = 'explictself') then
-      setOption(lcoExplictSelf)
+    if (Directive = 'explicitself') then
+      setOption(lcoExplicitSelf)
     else
     if (Directive = 'duplicatelocalnamehints') then
       setOption(lcoDuplicateLocalNameHints)
+    else
+    if (Directive = 'verbosecompile') then
+      setOption(lcoVerboseCompile)
     else
       Result := False;
   end;
@@ -1885,6 +1900,12 @@ var
     begin
       Assert(FStackInfo.Vars[0].Name = 'Self');
       FStackInfo.Delete(FStackInfo.Vars[0], True);
+
+      // Add reference to the to reference static methods or class variables
+      if (FuncHeader is TLapeType_MethodOfType) and TLapeType_MethodOfType(FuncHeader).ObjectType.CanHaveChild() then
+        FStackInfo.addDeclaration(
+          addManagedDecl(TLapeType_Type.Create(TLapeType_MethodOfType(FuncHeader).ObjectType, Self, 'Self'))
+        );
     end;
   end;
 
@@ -1998,7 +2019,8 @@ var
         tk_kw_Deprecated:
           begin
             Include(HintDirectives, lhdDeprecated);
-            if (Tokenizer.Expect([tk_typ_String, tk_sym_SemiColon]) = tk_typ_String) then
+
+            if (Tokenizer.Expect([tk_typ_String, tk_typ_HereString, tk_sym_SemiColon]) in [tk_typ_HereString, tk_typ_String]) then
               DeprecatedHint := lpString(Copy(Tokenizer.TokString, 2, Tokenizer.TokLen - 2));
           end;
         tk_kw_UnImplemented:
@@ -2061,7 +2083,7 @@ begin
       begin
         Result.SelfVar := _ResVar.New(FStackInfo.Vars[0]);
 
-        if (not (lcoExplictSelf in FOptions)) then
+        if (not (lcoExplicitSelf in FOptions)) then
         begin
           SelfWith.WithType := TLapeType_MethodOfType(FuncHeader).ObjectType;
           SelfWith.WithVar := @Result.SelfVar;
@@ -2234,7 +2256,7 @@ begin
       if (FuncForwards <> nil) and (OldDeclaration is TLapeGlobalVar) then
         FuncForwards.DeleteItem(TLapeGlobalVar(OldDeclaration));
 
-      if (lcoExplictSelf in FOptions) and ResetStack then
+      if (lcoExplicitSelf in FOptions) and ResetStack then
       begin
         SetStackOwner(nil).Free();
 
@@ -4556,11 +4578,13 @@ begin
   end;
 end;
 
-function TLapeCompiler.addGlobalFunc(AHeader: TLapeType_Method; AName, Body: lpString): TLapeTree_Method;
+function TLapeCompiler.addGlobalFunc(AHeader: TLapeType_Method; AName, Body: lpString; Pos: PDocPos): TLapeTree_Method;
 var
   OldState: Pointer;
 begin
   OldState := getTempTokenizerState(Body, '!addGlobalFuncBdy::' + AName);
+  Tokenizer.OverridePos := Pos;
+
   try
     Result := ParseMethod(nil, AHeader, AName);
     CheckAfterCompile();
