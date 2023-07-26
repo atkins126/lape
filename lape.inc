@@ -14,11 +14,13 @@
 {.$DEFINE Lape_SmallCode}                //Try to keep compiled code as small as possible (packed records, no aligning -- less memory, slower)
 {.$DEFINE Lape_TrackObjects}             //Track all created classes with a list to check for leaks
 {.$DEFINE Lape_Unicode}                  //Use unicodestrings
+{.$DEFINE Lape_NoExtended}               //No extended type
 
 {$IFDEF FPC}
   {$MODE objfpc}{$H+}
 {$ELSE}
   {$DEFINE Delphi}
+  {$DEFINE Lape_Unicode} // Delphi: The default string type is UnicodeString.
   {$POINTERMATH ON}
 
   {$IFDEF WIN64}
@@ -27,11 +29,6 @@
     {$DEFINE CPU86}
   {$ENDIF}
 {$ENDIF}
-
-{$IF DEFINED(UNICODE) and not DEFINED(Lape_Unicode)}
-  {$DEFINE Lape_NeedAnsiStringsUnit}
-{$IFEND}
-
 
 // https://bugs.freepascal.org/view.php?id=37305
 {$IF (DEFINED(FPC) and ((FPC_FULLVERSION=30200) or (FPC_FULLVERSION=30201)))}

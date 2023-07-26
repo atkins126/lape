@@ -27,6 +27,7 @@ type
     tk_NewLine,
 
     //Keywords
+    tk_kw_At,
     tk_kw_Array,
     tk_kw_Begin,
     tk_kw_Case,
@@ -152,6 +153,7 @@ type
   TLapeTokenizerBase = class(TLapeBaseDeclClass)
   protected
     FFileName: lpString;
+    FFileNameRelative: lpString;
     FLastTok: EParserToken;
     FTok: EParserToken;
     FTokStart: Integer;
@@ -178,6 +180,7 @@ type
     procedure setPos(APos: Integer); virtual;
     function getDocPos: TDocPos; override;
   public
+    RelativeFileNames: Boolean;
     OverridePos: PDocPos;
     NullPos: TDocPos;
 
@@ -251,7 +254,7 @@ const
   ParserToken_Symbols = [tk_sym_BracketClose..tk_sym_SemiColon];
   ParserToken_Types = [tk_typ_Float..tk_typ_Char];
 
-  Lape_Keywords: array[0..53 {$IFDEF Lape_PascalLabels}+1{$ENDIF}] of TLapeKeyword = (
+  Lape_Keywords: array[0..54 {$IFDEF Lape_PascalLabels}+1{$ENDIF}] of TLapeKeyword = (
       (Keyword: 'AND';           Token: tk_op_AND),
       (Keyword: 'DIV';           Token: tk_op_DIV),
       (Keyword: 'IN';            Token: tk_op_IN),
@@ -263,6 +266,7 @@ const
       (Keyword: 'SHR';           Token: tk_op_SHR),
       (Keyword: 'XOR';           Token: tk_op_XOR),
 
+      (Keyword: 'AT';            Token: tk_kw_At),
       (Keyword: 'ARRAY';         Token: tk_kw_Array),
       (Keyword: 'BEGIN';         Token: tk_kw_Begin),
       (Keyword: 'CASE';          Token: tk_kw_Case),
@@ -399,10 +403,10 @@ const
     {$IFEND};
 {$IFEND}
 
-function LapeTokenToString(Token: EParserToken): lpString; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function ParserTokenToOperator(Token: EParserToken): EOperator; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function StrToFloatDot(Str: string): Extended; {$IFDEF Lape_Inline}inline;{$ENDIF}
-function StrToFloatDotDef(Str: string; Default: Extended): Extended; {$IFDEF Lape_Inline}inline;{$ENDIF}
+function LapeTokenToString(Token: EParserToken): lpString;
+function ParserTokenToOperator(Token: EParserToken): EOperator;
+function StrToFloatDot(Str: string): Extended;
+function StrToFloatDotDef(Str: string; Default: Extended): Extended;
 function StrToUInt64(Str: string): UInt64;
 function StrToUInt64Def(Str: string; const Default: UInt64): UInt64;
 function DetermineIntType(IntType: ELapeBaseType; MinSize: UInt8): ELapeBaseType; overload;
@@ -428,7 +432,6 @@ implementation
 
 uses
   typinfo,
-  {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
   lpmessages;
 
 {$WARN WIDECHAR_REDUCED OFF}
@@ -1145,8 +1148,12 @@ begin
   else
     Result.Col := NullPos.Col + UInt32(FTokStart) - FDocPos.Col;
   if (FFileName <> '') then
-    Result.FileName := FFileName
-  else
+  begin
+    if RelativeFileNames then
+      Result.FileName := FFileNameRelative
+    else
+      Result.FileName := FFileName;
+  end else
     Result.FileName := NullPos.FileName;
 end;
 
@@ -1155,6 +1162,7 @@ begin
   inherited Create();
 
   FFileName := AFileName;
+  FFileNameRelative := ExtractRelativePath(IncludeTrailingPathDelimiter(GetCurrentDir()), FFileName);
   FOnParseDirective := nil;
   FOnHandleDirective := nil;
 

@@ -23,12 +23,12 @@ type
 
 procedure DisassembleCode(Code: PByte; PointerNames: TLapeDisassemblerPointerMap); overload;
 procedure DisassembleCode(Code: PByte; PointerNames: TLapeCompilerBase); overload;
-procedure DisassembleCode(Code: PByte; PointerNames: TLapeDeclArray = nil); overload;
+procedure DisassembleCode(Code: PByte; PointerNames: array of TLapeDeclArray); overload;
 
 implementation
 
 uses
-  lpmessages, lpinterpreter, lpeval, lputils;
+  lpmessages, lpinterpreter_types, lpeval, lputils;
 
 procedure DisassembleCode(Code: PByte; PointerNames: TLapeDisassemblerPointerMap);
 var
@@ -72,10 +72,45 @@ var
     Inc(Code, ocSize);
   end;
 
-  procedure DoGetExceptionMessage; {$IFDEF Lape_Inline}inline;{$ENDIF}
+  procedure DoDumpCallStack;
+  begin
+    _WriteLn('DumpCallStack');
+    _WriteLn('IncStack %d', [SizeOf(lpString)]);
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetScriptMethodName;
+  begin
+    _WriteLn('GetScriptMethodName');
+    _WriteLn('IncStack %d', [SizeOf(ShortString) - SizeOf(Pointer)]);
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetExceptionMessage;
   begin
     _WriteLn('GetExceptionMessage');
     _WriteLn('IncStack %d', [SizeOf(ShortString)]);
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetExceptionLocation;
+  begin
+    _WriteLn('GetExceptionLocation');
+    _WriteLn('IncStack %d', [SizeOf(Pointer)]);
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetCallerLocation;
+  begin
+    _WriteLn('GetCallerLocation');
+    _WriteLn('IncStack %d', [SizeOf(Pointer)]);
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetCallerAddress;
+  begin
+    _WriteLn('GetCallerAddress');
+    _WriteLn('IncStack %d', [SizeOf(Pointer)]);
     Inc(Code, ocSize);
   end;
 
@@ -235,7 +270,7 @@ begin
     while True do
     begin
       {$IFDEF Lape_EmitPos}
-      with PDocPos(PtrUInt(Code) + SizeOf(opCodeType))^ do
+      with PDocPos(PPointer(PtrUInt(Code) + SizeOf(opCode))^)^ do
         if (p.FileName <> FileName) or (p.Line <> Line) or (p.Col <> Col) then
         begin
           p.FileName := FileName;
@@ -248,7 +283,7 @@ begin
     end;
   except
     on E: Exception do
-      LapeExceptionFmt(lpeRuntime, [E.Message] {$IFDEF Lape_EmitPos}, PDocPos(PtrUInt(Code) + SizeOf(opCodeType))^ {$ENDIF});
+      LapeExceptionFmt(lpeRuntime, [E.Message] {$IFDEF Lape_EmitPos}, PDocPos(PPointer(PtrUInt(Code) + SizeOf(opCode))^)^ {$ENDIF});
   end;
 end;
 
@@ -301,22 +336,23 @@ begin
   end;
 end;
 
-procedure DisassembleCode(Code: PByte; PointerNames: TLapeDeclArray = nil);
+procedure DisassembleCode(Code: PByte; PointerNames: array of TLapeDeclArray);
 var
   pMap: TLapeDisassemblerPointerMap;
-  i: Integer;
+  i,j: Integer;
 begin
   pMap := TLapeDisassemblerPointerMap.Create('', dupIgnore, True);
   try
     Disassemble__EvalProcs(pMap);
 
     for i := 0 to High(PointerNames) do
-      if (PointerNames[i].Name = '') and (PointerNames[i] is TLapeGlobalVar) then
-        pMap[lpString(IntToHex(PtrUInt(TLapeGlobalVar(PointerNames[i]).Ptr), 0))] := string(TLapeGlobalVar(PointerNames[i]).AsString)
-      else if (PointerNames[i] is TLapeGlobalVar) then
-        pMap[lpString(IntToHex(PtrUInt(TLapeGlobalVar(PointerNames[i]).Ptr), 0))] := string(PointerNames[i].Name)
-      else
-        pMap[lpString(IntToHex(PtrUInt(PointerNames[i]), 0))] := string(PointerNames[i].Name);
+      for j := 0 to High(PointerNames[i]) do
+        if (PointerNames[i][j].Name = '') and (PointerNames[i][j] is TLapeGlobalVar) then
+          pMap[lpString(IntToHex(PtrUInt(TLapeGlobalVar(PointerNames[i][j]).Ptr), 0))] := string(TLapeGlobalVar(PointerNames[i][j]).AsString)
+        else if (PointerNames[i][j] is TLapeGlobalVar) then
+          pMap[lpString(IntToHex(PtrUInt(TLapeGlobalVar(PointerNames[i][j]).Ptr), 0))] := string(PointerNames[i][j].Name)
+        else
+          pMap[lpString(IntToHex(PtrUInt(PointerNames[i][j]), 0))] := string(PointerNames[i][j].Name);
 
     DisassembleCode(Code, pMap);
   finally

@@ -27,17 +27,7 @@ implementation
 
 uses
   {$IFDEF FPC}LCLIntf,{$ELSE}{$IFDEF MSWINDOWS}Windows,{$ENDIF}{$ENDIF} strutils,
-  {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
   lpcompiler, lpparser, lpmessages, lpinterpreter, lputils;
-
-{$IFNDEF FPC} //Internal error workaround
-{$IF NOT DECLARED(GetTickCount)}
-function GetTickCount: UInt32;
-begin
-  Result := Trunc(Now() * 24 * 60 * 60 * 1000);
-end;
-{$IFEND}
-{$ENDIF}
 
 constructor TLapeTester.Create(AFolder: string = '..'; ADebug: Boolean = False);
 begin
@@ -95,7 +85,7 @@ begin
       if (not Compile()) then
         LapeException('Error compiling file')
       else
-        RunCode(Emitter.Code, Emitter.CodeLen);
+        RunCode(Emitter);
     except
       on E: Exception do
       begin

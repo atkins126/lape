@@ -22,12 +22,14 @@ type
   TGetEvalRes = function(Op: EOperator; Left, Right: ELapeBaseType): ELapeBaseType;
   TGetEvalProc = function(Op: EOperator; Left, Right: ELapeBaseType): TLapeEvalProc;
 
+procedure _LapeLocationToStr(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+
 procedure _LapeWrite(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeWriteLn(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 
 procedure _LapeAssigned(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
-procedure _LapeRaise(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeRaiseString(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+procedure _LapeRaiseStringWithDocPos(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeAssert(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeAssertMsg(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeRangeCheck(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -43,6 +45,8 @@ procedure _LapeCompareMem(const Params: PParamArray; const Result: Pointer); {$I
 
 procedure _LapeSortWeighted_Int32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeSortWeighted_Int64(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+procedure _LapeSortWeighted_Single(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+procedure _LapeSortWeighted_Double(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeSortWeighted_Extended(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 
 procedure _LapeReverse(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -535,8 +539,9 @@ implementation
 
 uses
   Variants, Math, DateUtils,
-  {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
-  {$IFDEF FPC}LCLIntf,{$ELSE}{$IFDEF MSWINDOWS}Windows,{$ENDIF}{$ENDIF}
+  {$IFDEF DELPHI}
+  System.WideStrings, System.WideStrUtils,
+  {$ENDIF}
   lpmessages, lpparser;
 
 {$RangeChecks Off}
@@ -544,6 +549,24 @@ uses
 
 type
   PBoolean = ^Boolean; //Make sure it's not ^Byte
+
+procedure _LapeLocationToStr(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+
+  function LocationToStr(DocPos: TDocPos): String;
+  begin
+    Result := '';
+    if (DocPos.Line > 0) and (DocPos.Col > 0) then
+      Result := 'Line ' + IntToStr(DocPos.Line) + ', Column ' + IntToStr(DocPos.Col);
+    if (DocPos.FileName <> '') then
+      Result := Result + ' in file "' + DocPos.FileName + '"';
+  end;
+
+begin
+  if ((Params^[0] = nil) or (PPointer(Params^[0])^ = nil)) then
+    PlpString(Result)^ := 'Unknown'
+  else
+    PlpString(Result)^ := LocationToStr(PDocPos(Params^[0]^)^);
+end;
 
 procedure _LapeWrite(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
@@ -560,14 +583,14 @@ begin
   PEvalBool(Result)^ := Assigned(Params^[0]) and Assigned(PPointer(Params^[0])^);
 end;
 
-procedure _LapeRaise(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
-begin
-  raise Exception(Params^[0]^);
-end;
-
 procedure _LapeRaiseString(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
   LapeException(PlpString(Params^[0])^);
+end;
+
+procedure _LapeRaiseStringWithDocPos(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+begin
+  LapeException(PlpString(Params^[0])^, PDocPos(Params^[1]^)^);
 end;
 
 procedure _LapeAssert(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -631,6 +654,16 @@ end;
 procedure _LapeSortWeighted_Int64(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
   _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TInt64Array(Params^[3]^), PEvalBool(Params^[4])^);
+end;
+
+procedure _LapeSortWeighted_Single(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+begin
+  _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TSingleArray(Params^[3]^), PEvalBool(Params^[4])^);
+end;
+
+procedure _LapeSortWeighted_Double(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+begin
+  _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TDoubleArray(Params^[3]^), PEvalBool(Params^[4])^);
 end;
 
 procedure _LapeSortWeighted_Extended(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -930,7 +963,9 @@ begin
   Arr[ltSingle] := @_LapeToString_Single;
   Arr[ltDouble] := @_LapeToString_Double;
   Arr[ltCurrency] := @_LapeToString_Currency;
+  {$IFNDEF Lape_NoExtended}
   Arr[ltExtended] := @_LapeToString_Extended;
+  {$ENDIF}
   Arr[ltBoolean] := @_LapeToString_Boolean;
   Arr[ltByteBool] := @_LapeToString_ByteBool;
   Arr[ltWordBool] := @_LapeToString_WordBool;

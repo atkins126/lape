@@ -9,9 +9,11 @@ uses
   Interfaces, // this includes the LCL widgetset
   Forms, Main,
 
-  lpparser, lpcompiler, lptypes, lpeval, lpinterpreter, lpmessages,
-  lpvartypes, lpcodeemitter, lptree, lpdisassembler, lpvartypes_array, 
-  lpvartypes_ord, lpvartypes_record, lputils, lpffi, ffi;
+  lpparser, lpcompiler, lptypes, lpeval, lpinterpreter, lpinterpreter_types,
+  lpmessages, lpvartypes, lpcodeemitter, lptree, lpdisassembler,
+  lpvartypes_array, lpvartypes_ord, lpvartypes_record, lpvartypes_helper,
+  lpinternalmethods, lpinternalmethods_algorithm,
+  lputils, lpffi, ffi;
 
 {$R *.res}
 

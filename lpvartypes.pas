@@ -35,13 +35,16 @@ type
     lcoVerboseCompile,                 //      {$VERBOSECOMPILE}
     lcoDuplicateLocalNameHints,        //
     lcoArrayHelpers,                   //
-    lcoInitExternalResult              // Ensure empty result for external calls (useful for ffi)
+    lcoInheritableRecords,             //
+    lcoRelativeFileNames,              //
+    lcoInitExternalResult,             // Ensure empty result for external calls (useful for ffi)
+    lcoMethodDeclarationParentheses    //       {$METHODDECLARATIONPARENTHESES}  Require method declarations to have () if no parameters.
   );
   ECompilerOptionsSet = set of ECompilerOption;
   PCompilerOptionsSet = ^ECompilerOptionsSet;
 
 const
-  Lape_OptionsDef = [lcoArrayHelpers, lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress];
+  Lape_OptionsDef = [lcoArrayHelpers, lcoCOperators, lcoRangeCheck, lcoHints, lcoShortCircuit, lcoAlwaysInitialize, lcoAutoInvoke, lcoConstAddress, lcoInheritableRecords];
   Lape_PackRecordsDef = 8;
 
 type
@@ -690,9 +693,6 @@ type
     function getGlobalVar(AName: lpString): TLapeGlobalVar; virtual;
     function getGlobalType(AName: lpString): TLapeType; virtual;
 
-    function getIntegerArray: TLapeType; virtual;
-    function getFloatArray: TLapeType; virtual;
-
     function getDeclaration(AName: lpString; AStackInfo: TLapeStackInfo; LocalOnly: Boolean = False; CheckWith: Boolean = True): TLapeDeclaration; overload; virtual;
     function getDeclaration(AName: lpString; LocalOnly: Boolean = False; CheckWith: Boolean = True): TLapeDeclaration; overload; virtual;
     function hasDeclaration(AName: lpString; AStackInfo: TLapeStackInfo; LocalOnly: Boolean = False; CheckWith: Boolean = True): Boolean; overload; virtual;
@@ -753,9 +753,8 @@ var
 implementation
 
 uses
-  {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
-  lpvartypes_ord, lpvartypes_array, lptree,
-  lpmessages, lpeval, lpinterpreter;
+  lpvartypes_ord, lpvartypes_array, lptree, lpinternalmethods,
+  lpmessages, lpeval, lpinterpreter_types;
 
 procedure RequireOperators(Compiler: TLapeCompilerBase; ops: array of EOperator; LeftType, RightType: TLapeType; DocPos: TDocPos);
 
@@ -851,7 +850,9 @@ begin
   Arr[ltSingle] := TLapeType_Single.Create(Compiler, LapeTypeToString(ltSingle));
   Arr[ltDouble] := TLapeType_Double.Create(Compiler, LapeTypeToString(ltDouble));
   Arr[ltCurrency] := TLapeType_Currency.Create(Compiler, LapeTypeToString(ltCurrency));
+  {$IFNDEF Lape_NoExtended}
   Arr[ltExtended] := TLapeType_Extended.Create(Compiler, LapeTypeToString(ltExtended));
+  {$ENDIF}
   Arr[ltBoolean] := TLapeType_Boolean.Create(Compiler, LapeTypeToString(ltBoolean));
   Arr[ltByteBool] := TLapeType_ByteBool.Create(Compiler, LapeTypeToString(ltByteBool));
   Arr[ltWordBool] := TLapeType_WordBool.Create(Compiler, LapeTypeToString(ltWordBool));
@@ -2931,7 +2932,14 @@ begin
   else
   try
     if CompatibleWith(Right.VarType) then
-      Right.VarType := FMethodRecord;
+      Right.VarType := FMethodRecord
+    else
+    if Right.HasType() and (Right.VarType is TLapeType_Pointer) and (TLapeType_Pointer(Right.VarType).PType = FMethodRecord) then
+    begin
+      tmpRes := NullResVar;
+      Right := Right.VarType.Eval(op_Deref, tmpRes, Right, NullResVar, [], Offset, Pos);
+    end;
+
     Result := FMethodRecord.Eval(Op, Dest, Left, Right, Flags, Offset, Pos);
     if (Result.VarType = FMethodRecord) then
       Result.VarType := Self;
@@ -3538,8 +3546,8 @@ begin
   inherited Create(nil, False);
 
   Owner := AOwner;
-  FVarStack := TLapeVarStack.Create(nil, dupIgnore, False);
-  FWithStack := TLapeWithDeclarationList.Create(NullWithDecl, dupIgnore, False);
+  FVarStack := TLapeVarStack.Create(nil, dupAccept, False);
+  FWithStack := TLapeWithDeclarationList.Create(NullWithDecl, dupAccept, False);
   FreeVars := ManageVars;
   CodePos := -1;
 
@@ -4087,7 +4095,7 @@ begin
       FBaseTypesDictionary[FBaseTypes[BaseType].Name] := FBaseTypes[BaseType];
 
   addGlobalDecl(TLapeType_DynArray.Create(getBaseType(ltInt32), Self, '!integerarray'));
-  addGlobalDecl(TLapeType_DynArray.Create(getBaseType(ltExtended), Self, '!floatarray'));
+  addGlobalDecl(TLapeType_DynArray.Create(getBaseType(ltFloat), Self, '!floatarray'));
 end;
 
 destructor TLapeCompilerBase.Destroy;
@@ -4556,20 +4564,6 @@ begin
   Result := nil;
   if FGlobalDeclarations.Get(AName, Decl, bFalse) and (Decl is TLapeType) then
     Result := TLapeType(Decl);
-end;
-
-function TLapeCompilerBase.getIntegerArray: TLapeType;
-begin
-  Result := getGlobalType('!integerarray');
-
-  Assert(Result <> nil);
-end;
-
-function TLapeCompilerBase.getFloatArray: TLapeType;
-begin
-  Result := getGlobalType('!floatarray');
-
-  Assert(Result <> nil);
 end;
 
 function TLapeCompilerBase.getDeclaration(AName: lpString; AStackInfo: TLapeStackInfo; LocalOnly: Boolean = False; CheckWith: Boolean = True): TLapeDeclaration;

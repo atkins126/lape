@@ -20,13 +20,13 @@ type
   protected
     FDocPos: TDocPos;
     FError: lpString;
+    FStackTrace: lpString;
   public
     property DocPos: TDocPos read FDocPos;
     property Error: lpString read FError;
+    property StackTrace: lpString read FStackTrace;
 
-    function hasDocPos: Boolean;
-
-    constructor Create(AMessage: lpString; ADocPos: TDocPos);
+    constructor Create(AMessage: lpString; ADocPos: TDocPos; AStackTrace: lpString = '');
   end;
 
 const
@@ -102,7 +102,6 @@ const
   lpeOutOfTypeRange1 = 'Out of type range (value:%d, low:%d, high:%d)';
   lpeOutOfTypeRangeLow  = 'Out of type range (value:%d, low:%d)';
   lpeOutOfTypeRangeHigh = 'Out of type range (value:%d, high:%d)';
-  lpeOutsideExceptionBlock = 'Can only be used in an except/finally block';
   lpeOutsideExceptBlock = 'Can only be used in an except block';
   lpeIndexOutOfRange = 'Index out of range (index:%d, low:%d, high:%d)';
   lpeIndexOutOfRangeLow  = 'Index out of range (index:%d, low:%d)';
@@ -124,6 +123,7 @@ const
   lpeVariableOfTypeExpected = 'Expected variable of type "%s", got "%s"';
   lpeWrongNumberParams = 'Wrong number of parameters found, expected %d';
   lpeScriptMethodExpected = 'Script method expected';
+  lpeMethodDeclarationParenthesesExpected = 'Missing parentheses in function declaration';
 
   lphVariableNotUsed = 'Variable "%s" not used';
   lphParameterNotUsed = 'Parameter "%s" not used';
@@ -142,6 +142,9 @@ procedure LapeExceptionFmt(Msg: lpString; Args: array of const); overload;
 procedure LapeExceptionFmt(Msg: lpString; Args: array of const; DocPos: TDocPos); overload;
 procedure LapeExceptionFmt(Msg: lpString; Args: array of const; DocPos: array of TLapeBaseDeclClass); overload;
 
+procedure LapeExceptionRuntime(e: lpException; StackTrace: lpString); overload;
+procedure LapeExceptionRuntime(e: Exception; StackTrace: lpString; DocPos: TDocPos); overload;
+
 function FormatLocation(Msg: lpString; DocPos: TDocPos): lpString;
 
 implementation
@@ -151,12 +154,7 @@ uses
   AnsiStrings;
 {$ENDIF}
 
-function lpException.hasDocPos: Boolean;
-begin
-  Result := (DocPos.Col <> NullDocPos.Col) and (DocPos.Line <> NullDocPos.Line);
-end;
-
-constructor lpException.Create(AMessage: lpString; ADocPos: TDocPos);
+constructor lpException.Create(AMessage: lpString; ADocPos: TDocPos; AStackTrace: lpString);
 begin
   if (ADocPos.Col <> NullDocPos.Col) and (ADocPos.Line <> NullDocPos.Line) then
     inherited Create(string(FormatLocation(AMessage, ADocPos)))
@@ -165,6 +163,17 @@ begin
 
   FDocPos := ADocPos;
   FError := AMessage;
+  FStackTrace := AStackTrace;
+end;
+
+procedure LapeExceptionRuntime(e: lpException; StackTrace: lpString);
+begin
+  raise lpException.Create(Format(lpeRuntime, [e.Error]), e.DocPos, StackTrace);
+end;
+
+procedure LapeExceptionRuntime(e: Exception; StackTrace: lpString; DocPos: TDocPos);
+begin
+  raise lpException.Create(Format(lpeRuntime, [e.Message]), DocPos, StackTrace);
 end;
 
 function FormatLocation(Msg: lpString; DocPos: TDocPos): lpString;

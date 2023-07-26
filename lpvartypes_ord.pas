@@ -63,8 +63,10 @@ type
     public constructor Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; virtual; end;
   TLapeType_Currency = class({$IFDEF FPC}specialize{$ENDIF} TLapeType_Float<Currency>)
     public constructor Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; virtual; end;
+  {$IFNDEF Lape_NoExtended}
   TLapeType_Extended = class({$IFDEF FPC}specialize{$ENDIF} TLapeType_Float<Extended>)
     public constructor Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; virtual; end;
+  {$ENDIF}
 
   TLapeType_AnsiChar = class({$IFDEF FPC}specialize{$ENDIF} TLapeType_Char<AnsiChar>)
     public constructor Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; virtual; end;
@@ -115,6 +117,7 @@ type
     function CreateCopy(DeepCopy: Boolean = False): TLapeType; override;
     destructor Destroy; override;
 
+    function canSet: Boolean;
     function hasMember(AName: lpString): Boolean; virtual;
     function addMember(Value: Int64; AName: lpString): Int64; overload; virtual;
     function addMember(AName: lpString): Int64; overload; virtual;
@@ -195,7 +198,6 @@ implementation
 
 uses
   Variants,
-  {$IFDEF Lape_NeedAnsiStringsUnit}AnsiStrings,{$ENDIF}
   lpparser, lpeval, lpmessages;
 
 function TLapeType_Integer{$IFNDEF FPC}<_Type>{$ENDIF}.NewGlobalVar(Val: _Type; AName: lpString = ''; ADocPos: PDocPos = nil): TLapeGlobalVar;
@@ -339,10 +341,12 @@ begin
   inherited Create(ltCurrency, ACompiler, AName, ADocPos);
 end;
 
+{$IFNDEF Lape_NoExtended}
 constructor TLapeType_Extended.Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil);
 begin
   inherited Create(ltExtended, ACompiler, AName, ADocPos);
 end;
+{$ENDIF}
 
 constructor TLapeType_AnsiChar.Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil);
 begin
@@ -517,6 +521,11 @@ begin
   inherited;
 end;
 
+function TLapeType_Enum.canSet: Boolean;
+begin
+  Result := FMemberMap.Count < 256; // pascal sets can have a maximum of 256 elements, this includes gaps!
+end;
+
 function TLapeType_Enum.hasMember(AName: lpString): Boolean;
 begin
   Result := FMemberMap.IndexOf(string(AName)) > -1;
@@ -531,7 +540,7 @@ begin
   else if (AName = '') or hasMember(AName) then
     LapeException(lpeDuplicateDeclaration);
 
-  Result:= Value;
+  Result := Value;
   FRange.Hi := Value;
   if (FMemberMap.Count = 0) then
     FRange.Lo := Value

@@ -9,22 +9,22 @@
 
 procedure _LapeUTF8EncodeW(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
-  PlpString(Result)^ := UTF8Encode(PWideString(Params^[0])^);
+  PAnsiString(Result)^ := UTF8Encode(PWideString(Params^[0])^);
 end;
 
 procedure _LapeUTF8EncodeU(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
-  PlpString(Result)^ := UTF8Encode(PUnicodeString(Params^[0])^);
+  PAnsiString(Result)^ := UTF8Encode(PUnicodeString(Params^[0])^);
 end;
 
 procedure _LapeUTF8DecodeW(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
-  PWideString(Result)^ := UTF8Encode(PlpString(Params^[0])^);
+  PWideString(Result)^ := UTF8Decode(PAnsiString(Params^[0])^);
 end;
 
 procedure _LapeUTF8DecodeU(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
-  PUnicodeString(Result)^ := UTF8Encode(PlpString(Params^[0])^);
+  PUnicodeString(Result)^ := UTF8Decode(PAnsiString(Params^[0])^);
 end;
 
 procedure _LapeUpperCase(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -194,12 +194,12 @@ end;
 
 procedure _LapeStrToFloat(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
-  PExtended(Result)^ := StrToFloat(string(PlpString(Params^[0])^));
+  PlpFloat(Result)^ := StrToFloat(string(PlpString(Params^[0])^));
 end;
 
 procedure _LapeStrToFloatDef(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
-  PExtended(Result)^ := StrToFloatDef(string(PlpString(Params^[0])^), PExtended(Params^[1])^);
+  PlpFloat(Result)^ := StrToFloatDef(string(PlpString(Params^[0])^), PlpFloat(Params^[1])^);
 end;
 
 procedure _LapeStrToCurr(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -240,7 +240,7 @@ end;
 
 procedure _LapeFormatFloat(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
-  PlpString(Result)^ := lpString(FormatFloat(string(PlpString(Params^[0])^), PExtended(Params^[1])^));
+  PlpString(Result)^ := lpString(FormatFloat(string(PlpString(Params^[0])^), PlpFloat(Params^[1])^));
 end;
 
 procedure _LapeFormatCurr(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -265,7 +265,11 @@ end;
 
 procedure _LapeUnicodeStringReplace(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
+  {$IFDEF FPC}
   PUnicodeString(Result)^ := UnicodeStringReplace(PUnicodeString(Params^[0])^, PUnicodeString(Params^[1])^, PUnicodeString(Params^[2])^, TReplaceFlags(PLapeSmallEnum(Params^[3])^));
+  {$ELSE}
+  PUnicodeString(Result)^ := StringReplace(PUnicodeString(Params^[0])^, PUnicodeString(Params^[1])^, PUnicodeString(Params^[2])^, TReplaceFlags(PLapeSmallEnum(Params^[3])^));
+  {$ENDIF}
 end;
 
 procedure _LapeIsDelimiter(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}

@@ -15,80 +15,19 @@ unit lpinterpreter;
 interface
 
 uses
-  SysUtils,
-  lptypes;
-
-type
-  opCode = (
-    ocNone,
-    ocIsInternal,                                              //IsInternal
-    ocGetExceptionMessage,                                     //GetExceptionMessage
-    ocInitStackLen,                                            //InitStackLen TStackOffset
-    ocInitVarLen,                                              //InitVarLen TStackOffset
-    ocInitStack,                                               //InitStack TStackOffset
-    ocGrowStack,                                               //GrowStack TStackOffset
-    ocExpandVar,                                               //ExpandVar TStackOffset
-    ocExpandVarAndInit,                                        //ExpandVarAndInit TStackOffset
-    ocGrowVar,                                                 //GrowVar TStackOffset
-    ocGrowVarAndInit,                                          //GrowVarAndInit TStackOffset
-    ocPopStackToVar,                                           //PopStackToVar TStackOffset TVarStackOffset
-    ocPopVarToStack,                                           //PopVarToStack TStackOffset TVarStackOffset
-    ocPopVar,                                                  //PopVar
-    ocJmpVar,                                                  //JmpVar
-    ocJmpSafe,                                                 //JmpSafe TCodePos
-    ocJmpSafeR,                                                //JmpSafeR TCodeOffset
-
-    ocIncTry,                                                  //IncTry TCodeOffset UInt32
-    ocDecTry,                                                  //DecTry
-    ocEndTry,                                                  //EndTry
-    ocCatchException,                                          //CatchException
-    ocReRaiseException,                                        //ReRaiseException
-
-    ocDecCall,                                                 //DecCall
-    ocDecCall_EndTry,                                          //DecCall_EndTry
-
-    {$I lpinterpreter_invokeopcodes.inc}
-    {$I lpinterpreter_jumpopcodes.inc}
-    {$I lpinterpreter_evalopcodes.inc}
-  );
-  opCodeTypeP = ^opCodeType;
-  {$IFDEF Lape_SmallCode}
-  opCodeType = Byte;
-  {$ELSE}
-  opCodeType = Integer; //Better alignment
-  {$ENDIF}
-
-  POC_PopStackToVar = ^TOC_PopStackToVar;
-  TOC_PopStackToVar = record
-    Size: TStackOffset;
-    VOffset: TVarStackOffset;
-  end;
-
-  POC_IncTry = ^TOC_IncTry;
-  TOC_IncTry = record
-    Jmp: TCodeOffset;
-    JmpFinally: UInt32;
-  end;
-
-  {$I lpinterpreter_invokerecords.inc}
-  {$I lpinterpreter_jumprecords.inc}
-  {$I lpinterpreter_evalrecords.inc}
+  Classes, SysUtils,
+  lptypes, lpvartypes,
+  lpinterpreter_types;
 
 const
-  ocSize = SizeOf(opCodeType) {$IFDEF Lape_EmitPos}+SizeOf(TDocPos){$ENDIF};
-
-  Try_NoFinally: UInt32 = UInt32(-1);
-  Try_NoExcept: UInt32 = UInt32(-2);
-  EndJump: TCodePos = TCodePos(-1);
-
   StackSize = 2048 * SizeOf(Pointer);
   VarStackSize = 512 * SizeOf(Pointer);
   VarStackStackSize = 32;
   TryStackSize = 512;
   CallStackSize = 512;
 
-procedure RunCode(Code: PByte; CodeLen: Integer; var DoContinue: TInitBool; InitialVarStack: TByteArray = nil; InitialJump: TCodePos = 0); overload;
-procedure RunCode(Code: PByte; CodeLen: Integer; InitialVarStack: TByteArray = nil; InitialJump: TCodePos = 0); overload;
+procedure RunCode(const Emitter: TLapeCodeEmitter; var DoContinue: TInitBool; const InitialVarStack: TByteArray = nil; const InitialJump: TCodePos = 0); overload;
+procedure RunCode(const Emitter: TLapeCodeEmitter; const InitialVarStack: TByteArray = nil; const InitialJump: TCodePos = 0); overload;
 
 implementation
 
@@ -98,23 +37,79 @@ uses
 {$OverFlowChecks Off}
 
 type
+  TStackTraceInfo = array of record
+    Address: TCodePos;
+    CalledFrom: PByte;
+  end;
+
+  TJumpException = class
+    Obj: Exception;
+    Pos: PDocPos;
+    StackTraceInfo: TStackTraceInfo;
+  end;
+
   TInJump = record
-    JumpException: record
-      Obj: Exception;
-      Pos: PDocPos;
-    end;
+    JumpException: TJumpException;
     JumpSafe: PByte;
   end;
 
 const
-  InEmptyJump: TInJump = (JumpException: (Obj: nil; Pos: nil); JumpSafe: nil);
+  InEmptyJump: TInJump = (JumpException: nil; JumpSafe: nil);
 
-procedure MergeJumps(var AJump: TInJump; const Merge: TInJump);
-begin
-  if (Merge.JumpException.Obj <> nil) then
+function GetStackTrace(Emitter: TLapeCodeEmitter; StackTraceInfo: TStackTraceInfo; Pos: PDocPos): lpString;
+
+  function FormatLine(Number: Integer; FuncName: String; Pos: PDocPos): lpString;
   begin
-    if (AJump.JumpException.Obj <> nil) and (AJump.JumpException.Obj <> Merge.JumpException.Obj) then
-      Merge.JumpException.Obj.Free()
+    if (FuncName = 'main') then
+      FuncName := '"' + FuncName + '"'
+    else
+      FuncName := 'function "' + FuncName + '"';
+
+    if (Pos <> nil) and (Pos^.Col <> NullDocPos.Col) and (Pos^.Line <> NullDocPos.Line) then
+    begin
+      Result := LineEnding + '  ' + IntToStr(Number) + ') Line ' + IntToStr(Pos^.Line) + ' in ' + FuncName;
+      if (Pos^.FileName <> '') then
+        Result := Result + ' in file "' + Pos^.FileName + '"';
+    end else
+      Result := LineEnding + '  ' + IntToStr(Number) + ') ' + FuncName;
+  end;
+
+var
+  i, Number: Integer;
+  DocPos: PDocPos;
+begin
+  Result := 'Stack Trace:';
+
+  if (Length(StackTraceInfo) = 0) then
+    Result := Result + FormatLine(0, 'main', Pos)
+  else
+  begin
+    Result := Result + FormatLine(0, Emitter.CodePointerName[StackTraceInfo[High(StackTraceInfo)].Address], Pos);
+
+    Number := 1;
+    for i := High(StackTraceInfo) downto 0 do
+    begin
+      DocPos := @NullDocPos;
+      {$IFDEF Lape_EmitPos}
+      DocPos := PPointer(StackTraceInfo[i].CalledFrom + SizeOf(opCode))^;
+      {$ENDIF}
+
+      if (i > 0) then
+        Result := Result + FormatLine(Number, Emitter.CodePointerName[StackTraceInfo[i - 1].Address], DocPos)
+      else
+        Result := Result + FormatLine(Number, 'main', DocPos);
+
+      Inc(Number);
+    end;
+  end;
+end;
+
+procedure MergeJumps(var AJump: TInJump; const Merge: TInJump); {$IFDEF Lape_Inline}inline;{$ENDIF}
+begin
+  if (Merge.JumpException <> nil) then
+  begin
+    if (AJump.JumpException <> nil) and (AJump.JumpException <> Merge.JumpException) then
+      Merge.JumpException.Free()
     else
       AJump.JumpException := Merge.JumpException;
   end;
@@ -123,10 +118,16 @@ begin
     AJump.JumpSafe := Merge.JumpSafe;
 end;
 
-procedure RunCode(Code: PByte; CodeLen: Integer; var DoContinue: TInitBool; InitialVarStack: TByteArray = nil; InitialJump: TCodePos = 0);
+function IsLapeException(const E: Exception): Boolean; {$IFDEF Lape_Inline}inline;{$ENDIF}
+begin
+  Result := (E <> nil) and (E.ClassType = lpException) and (lpException(e).DocPos.Col <> NullDocPos.Col) and (lpException(e).DocPos.Line <> NullDocPos.Line);
+end;
+
+procedure RunCode(const Emitter: TLapeCodeEmitter; var DoContinue: TInitBool; const InitialVarStack: TByteArray; const InitialJump: TCodePos);
 const
-  opNone: opCodeType = opCodeType(ocNone);
+  opNone: opCode = ocNone;
 var
+  Code: PByte;
   CodeBase: PByte;
   CodeUpper: PByte;
   Stack: TByteArray;
@@ -142,70 +143,86 @@ var
   TryStack: array of record
     Jmp: PByte;
     JmpFinally: PByte;
-    ExceptionMessage: String;
-    ExceptionLocation: TDocPos;
   end;
   TryStackPos: UInt32;
   InJump: TInJump;
 
   CallStack: array of record
+    Address: TCodePos;
     CalledFrom: PByte;
+    JumpBack: PByte;
     StackP, VarStackP: UInt32;
     Jump: TInJump;
   end;
   CallStackPos: UInt32;
 
-  procedure ExpandVarStack(Size: UInt32); {$IFDEF Lape_Inline}inline;{$ENDIF}
+  PreviousException: record
+    Exists: Boolean;
+    Msg: lpString;
+    Loc: TDocPos;
+  end;
+
+  function NeedMoreVarStack(const Size: UInt32): Boolean; {$IFDEF Lape_Inline}inline;{$ENDIF}
   begin
-    if (VarStackLen + Size > UInt32(Length(VarStack))) then
-    begin
-      VarStackStack[VarStackIndex].Pos := VarStackLen;
-
-      Inc(VarStackIndex);
-      if (VarStackIndex >= UInt32(Length(VarStackStack))) then
-        SetLength(VarStackStack, VarStackIndex + (VarStackStackSize div 2));
-
-      VarStackPos := 0;
-      VarStackLen := Size;
-      VarStack := VarStackStack[VarStackIndex].Stack;
-
-      if (Size > VarStackSize) then
-        SetLength(VarStack, Size)
-      else if (VarStack = nil) then
-        SetLength(VarStack, VarStackSize);
-
-      VarStackStack[VarStackIndex].Stack := VarStack;
-    end
-    else
+    Result := VarStackLen + Size > Length(VarStack);
+    if not Result then
     begin
       VarStackPos := VarStackLen;
-      Inc(VarStackLen, Size);
+      VarStackLen := VarStackLen + Size;
     end;
   end;
 
-  procedure GrowVarStack(Size: UInt32); {$IFDEF Lape_Inline}inline;{$ENDIF}
+  function NeedMoreGrowVarStack(const Size: UInt32): Boolean; {$IFDEF Lape_Inline}inline;{$ENDIF}
+  begin
+    Result := VarStackLen + Size > Length(VarStack);
+    if not Result then
+      VarStackLen := VarStackLen + Size;
+  end;
+
+  procedure ExpandVarStack(const Size: UInt32);
+  begin
+    Assert(VarStackLen + Size > Length(VarStack));
+
+    VarStackStack[VarStackIndex].Pos := VarStackLen;
+
+    Inc(VarStackIndex);
+    if (VarStackIndex >= UInt32(Length(VarStackStack))) then
+      SetLength(VarStackStack, VarStackIndex + (VarStackStackSize div 2));
+
+    VarStackPos := 0;
+    VarStackLen := Size;
+    VarStack := VarStackStack[VarStackIndex].Stack;
+
+    if (Size > VarStackSize) then
+      SetLength(VarStack, Size)
+    else
+    if (VarStack = nil) then
+      SetLength(VarStack, VarStackSize);
+
+    VarStackStack[VarStackIndex].Stack := VarStack;
+  end;
+
+  procedure GrowVarStack(const Size: UInt32);
   var
     OldLen: UInt32;
   begin
-    if (VarStackLen + Size > UInt32(Length(VarStack))) then
-      if (VarStackPos = 0) then
-      begin
-        Inc(VarStackLen, Size);
-        SetLength(VarStack, VarStackLen);
-        VarStackStack[VarStackIndex].Stack := VarStack;
-      end
-      else
-      begin
-        OldLen := VarStackLen - VarStackPos;
-        ExpandVarStack(Size + OldLen);
-        with VarStackStack[VarStackIndex - 1] do
-        begin
-          Dec(Pos, OldLen);
-          Move(Stack[Pos], VarStack[0], OldLen);
-        end;
-      end
-    else
+    Assert(VarStackLen + Size > Length(VarStack));
+
+    if (VarStackPos = 0) then
+    begin
       Inc(VarStackLen, Size);
+      SetLength(VarStack, VarStackLen);
+      VarStackStack[VarStackIndex].Stack := VarStack;
+    end else
+    begin
+      OldLen := VarStackLen - VarStackPos;
+      ExpandVarStack(Size + OldLen);
+      with VarStackStack[VarStackIndex - 1] do
+      begin
+        Dec(Pos, OldLen);
+        Move(Stack[Pos], VarStack[0], OldLen);
+      end;
+    end;
   end;
 
   procedure JumpTo(const Target: TCodePos); {$IFDEF Lape_Inline}inline;{$ENDIF}
@@ -220,30 +237,13 @@ var
     Inc(Code, Offset);
   end;
 
-  procedure HandleException; {$IFDEF Lape_Inline}inline;{$ENDIF}
+  procedure HandleException;
   begin
     if (TryStackPos > 0) then
     begin
-      TryStack[TryStackPos].ExceptionMessage := '';
-
       Dec(TryStackPos);
       Code := TryStack[TryStackPos].Jmp;
-
-      if (InJump.JumpException.Obj <> nil) then
-      begin
-        if (InJump.JumpException.Obj is lpException) then
-          TryStack[TryStackPos].ExceptionMessage := lpException(InJump.JumpException.Obj).Error
-        else
-          TryStack[TryStackPos].ExceptionMessage := InJump.JumpException.Obj.Message;
-
-        if (InJump.JumpException.Obj is lpException) and lpException(InJump.JumpException.Obj).hasDocPos then
-          TryStack[TryStackPos].ExceptionLocation := lpException(InJump.JumpException.Obj).DocPos
-        else
-        if (InJump.JumpException.Pos <> nil) then
-          TryStack[TryStackPos].ExceptionLocation := InJump.JumpException.Pos^;
-      end;
-    end
-    else
+    end else
       raise InJump.JumpException.Obj;
   end;
 
@@ -273,9 +273,15 @@ var
 
   procedure PushToVar(const Size: TStackOffset); {$IFDEF Lape_Inline}inline;{$ENDIF}
   begin
-    Dec(StackPos, Size);
-    ExpandVarStack(Size);
-    Move(Stack[StackPos], VarStack[VarStackPos], Size);
+    if NeedMoreVarStack(Size) then
+      ExpandVarStack(Size);
+
+    if (Size > 0) then
+    begin
+      Dec(StackPos, Size);
+
+      Move(Stack[StackPos], VarStack[VarStackPos], Size);
+    end;
   end;
 
   procedure DoCheckInternal; {$IFDEF Lape_Inline}inline;{$ENDIF}
@@ -283,33 +289,137 @@ var
     Check: PtrUInt;
   begin
     Check := PtrUInt(CodeBase) + PtrUInt(PCodePos(@Stack[StackPos - SizeOf(Pointer)])^);
-    PEvalBool(@Stack[StackPos - SizeOf(Pointer)])^ := (Check >= PtrUInt(CodeBase)) and (Check < PtrUInt(CodeUpper)) and (opCodeTypeP(Check)^ = opCodeType(ocIncTry));
+    PEvalBool(@Stack[StackPos - SizeOf(Pointer)])^ := (Check >= PtrUInt(CodeBase)) and (Check < PtrUInt(CodeUpper)) and (opCodeP(Check)^ = ocIncTry);
     Dec(StackPos, SizeOf(Pointer) - SizeOf(EvalBool));
     Inc(Code, ocSize);
   end;
 
-  procedure DoGetExceptionMessage; {$IFDEF Lape_Inline}inline;{$ENDIF}
+  procedure DoGetExceptionMessage;
   begin
-    PShortString(@Stack[StackPos])^ := TryStack[TryStackPos].ExceptionMessage;
-    Inc(StackPos, SizeOf(ShortString));
+    if PreviousException.Exists then
+      PlpString(PPointer(@Stack[StackPos - SizeOf(Pointer)])^)^ := PreviousException.Msg
+    else
+      PlpString(PPointer(@Stack[StackPos - SizeOf(Pointer)])^)^ := '';
+
+    Dec(StackPos, SizeOf(Pointer));
     Inc(Code, ocSize);
   end;
 
-  procedure DoReRaiseException; {$IFDEF Lape_Inline}inline;{$ENDIF}
+  procedure DoGetExceptionLocation;
+  begin
+    if PreviousException.Exists then
+      PPointer(@Stack[StackPos])^ := @PreviousException.Loc
+    else
+      PPointer(@Stack[StackPos])^ := nil;
+
+    Inc(StackPos, SizeOf(Pointer));
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetCallerLocation;
+  begin
+    {$IFDEF Lape_EmitPos}
+    if (CallStackPos > 0) then
+      PPointer(@Stack[StackPos])^ := PPointer(CallStack[CallStackPos - 1].CalledFrom + SizeOf(opCode))^
+    else
+      PPointer(@Stack[StackPos])^ := nil;
+    {$ELSE}
+    PPointer(@Stack[StackPos])^ := nil;
+    {$ENDIF}
+
+    Inc(StackPos, SizeOf(Pointer));
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetCallerAddress;
+  begin
+    if (CallStackPos < 2) then
+      PPointer(@Stack[StackPos])^ := nil
+    else
+      PPointer(@Stack[StackPos])^ := Pointer(CallStack[CallStackPos - 2].Address);
+
+    Inc(StackPos, SizeOf(Pointer));
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoDumpCallStack;
   var
-    Pos: Int32;
+    StackTraceInfo: TStackTraceInfo;
+    Offset, i: Integer;
+    Pos: PDocPos;
+  begin
+    Offset := PInt32(@Stack[StackPos - (SizeOf(Pointer) + SizeOf(Int32))])^;
+
+    if (Offset >= 0) and (Offset <= CallStackPos) then
+    begin
+      SetLength(StackTraceInfo, CallStackPos - Offset);
+      for i := 0 to High(StackTraceInfo) do
+      begin
+        StackTraceInfo[i].Address := CallStack[i].Address;
+        StackTraceInfo[i].CalledFrom := CallStack[i].CalledFrom;
+      end;
+
+      {$IFDEF Lape_EmitPos}
+      if (Offset > 0) then
+        Pos := PPointer(CallStack[CallStackPos - Offset].CalledFrom + SizeOf(opCode))^
+      else
+        Pos := PPointer(Code + SizeOf(opCode))^;
+      {$ELSE}
+      Pos := nil;
+      {$ENDIF}
+
+      PlpString(PPointer(@Stack[StackPos - SizeOf(Pointer)])^)^ := GetStackTrace(Emitter, StackTraceInfo, Pos);
+    end;
+
+    Dec(StackPos, SizeOf(Int32) + SizeOf(Pointer));
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoGetScriptMethodName;
+  begin
+    {$IFDEF Delphi}
+    PShortString(@Stack[StackPos - SizeOf(Pointer)])^ := UTF8EncodeToShortString(Emitter.CodePointerName[PCodePos(@Stack[StackPos - SizeOf(Pointer)])^]);
+    {$ELSE}
+    PShortString(@Stack[StackPos - SizeOf(Pointer)])^ := Emitter.CodePointerName[PCodePos(@Stack[StackPos - SizeOf(Pointer)])^];
+    {$ENDIF}
+
+    Inc(StackPos, SizeOf(ShortString) - SizeOf(Pointer));
+    Inc(Code, ocSize);
+  end;
+
+  procedure DoReRaiseException;
   begin
     Inc(Code, ocSize);
 
-    Pos := TryStackPos;
-    while (Pos > 0) and
-          (TryStack[Pos].ExceptionLocation.Line = NullDocPos.Line) and
-          (TryStack[Pos].ExceptionLocation.Col = NullDocPos.Line) and
-          (TryStack[Pos].ExceptionMessage = '') do
-      Dec(Pos);
+    if (not PreviousException.Exists) then
+      LapeException(lpeImpossible)
+    else
+      LapeException(PreviousException.Msg, PreviousException.Loc);
+  end;
 
-    with TryStack[Pos] do
-      LapeException(ExceptionMessage, ExceptionLocation);
+  procedure DoCatchException;
+  begin
+    if (InJump.JumpException <> nil) then
+    begin
+      PreviousException.Exists := True;
+
+      if IsLapeException(InJump.JumpException.Obj) then
+      begin
+        PreviousException.Msg := lpException(InJump.JumpException.Obj).Error;
+        PreviousException.Loc := lpException(InJump.JumpException.Obj).DocPos;
+      end else
+      begin
+        PreviousException.Msg := InJump.JumpException.Obj.Message;
+        if (InJump.JumpException.Pos <> nil) then
+          PreviousException.Loc := InJump.JumpException.Pos^;
+      end;
+
+      InJump.JumpException.Obj.Free();
+
+      FreeAndNil(InJump.JumpException);
+    end;
+
+    Inc(Code, ocSize);
   end;
 
   procedure DoInitStackLen; {$IFDEF Lape_Inline}inline;{$ENDIF}
@@ -319,13 +429,6 @@ var
     InitStackSize := PStackOffset(PtrUInt(Code) + ocSize)^;
     if (StackPos + InitStackSize > UInt32(Length(Stack))) then
       SetLength(Stack, StackPos + InitStackSize + (StackSize div 2));
-    Inc(Code, SizeOf(TStackOffset) + ocSize);
-  end;
-
-  procedure DoInitVarLen; {$IFDEF Lape_Inline}inline;{$ENDIF}
-  begin
-    SetLength(VarStack, PStackOffset(PtrUInt(Code) + ocSize)^);
-    VarStackStack[VarStackIndex].Stack := VarStack;
     Inc(Code, SizeOf(TStackOffset) + ocSize);
   end;
 
@@ -352,8 +455,12 @@ var
   end;
 
   procedure DoExpandVar; {$IFDEF Lape_Inline}inline;{$ENDIF}
+  var
+    ExpandSize: TStackOffset;
   begin
-    ExpandVarStack(PStackOffset(PtrUInt(Code) + ocSize)^);
+    ExpandSize := PStackOffset(PtrUInt(Code) + ocSize)^;
+    if NeedMoreVarStack(ExpandSize) then
+      ExpandVarStack(PStackOffset(PtrUInt(Code) + ocSize)^);
     Inc(Code, SizeOf(TStackOffset) + ocSize);
   end;
 
@@ -362,14 +469,19 @@ var
     ExpandSize: TStackOffset;
   begin
     ExpandSize := PStackOffset(PtrUInt(Code) + ocSize)^;
-    ExpandVarStack(ExpandSize);
+    if NeedMoreVarStack(ExpandSize) then
+      ExpandVarStack(ExpandSize);
     FillChar(VarStack[VarStackPos], ExpandSize, 0);
     Inc(Code, SizeOf(TStackOffset) + ocSize);
   end;
 
   procedure DoGrowVar; {$IFDEF Lape_Inline}inline;{$ENDIF}
+  var
+    GrowSize: TStackOffset;
   begin
-    GrowVarStack(PStackOffset(PtrUInt(Code) + ocSize)^);
+    GrowSize := PStackOffset(PtrUInt(Code) + ocSize)^;
+    if NeedMoreGrowVarStack(GrowSize) then
+      GrowVarStack(GrowSize);
     Inc(Code, SizeOf(TStackOffset) + ocSize);
   end;
 
@@ -378,7 +490,8 @@ var
     GrowSize: TStackOffset;
   begin
     GrowSize := PStackOffset(PtrUInt(Code) + ocSize)^;
-    GrowVarStack(GrowSize);
+    if NeedMoreGrowVarStack(GrowSize) then
+      GrowVarStack(GrowSize);
     FillChar(VarStack[VarStackLen - GrowSize], GrowSize, 0);
     Inc(Code, SizeOf(TStackOffset) + ocSize);
   end;
@@ -472,31 +585,26 @@ var
 
   procedure DoEndTry; {$IFDEF Lape_Inline}inline;{$ENDIF}
   begin
-    TryStack[TryStackPos].ExceptionMessage := '';
-    TryStack[TryStackPos].ExceptionLocation := NullDocPos;
-
-    if (InJump.JumpException.Obj <> nil) then
+    if (InJump.JumpException <> nil) then
       HandleException()
     else if (InJump.JumpSafe <> nil) then
       HandleSafeJump()
     else
       Inc(Code, ocSize);
+
+    PreviousException.Exists := False;
   end;
 
-  procedure DoCatchException; {$IFDEF Lape_Inline}inline;{$ENDIF}
-  begin
-    FreeAndNil(InJump.JumpException.Obj);
-    Inc(Code, ocSize);
-  end;
-
-  procedure DoIncCall(RecSize: Integer; Jmp: TCodePos; ParamSize: TParamSize; StackPosOffset: TStackInc = 0); {$IFDEF Lape_Inline}inline;{$ENDIF}
+  procedure DoIncCall(const RecSize: Integer; const Jmp: TCodePos; const ParamSize: TParamSize; const StackPosOffset: TStackInc = 0); {$IFDEF Lape_Inline}inline;{$ENDIF}
   begin
     if (CallStackPos >= UInt32(Length(CallStack))) then
       SetLength(CallStack, CallStackPos + (CallStackSize div 2));
 
     with CallStack[CallStackPos] do
     begin
-      CalledFrom := PByte(PtrInt(Code) + ocSize + RecSize);
+      Address := Jmp;
+      CalledFrom := Code;
+      JumpBack := PByte(PtrInt(Code) + ocSize + RecSize);
       VarStackP := VarStackPos;
       PushToVar(ParamSize);
       StackP := StackPos + UInt32(StackPosOffset);
@@ -518,7 +626,7 @@ var
       Dec(CallStackPos);
       with CallStack[CallStackPos] do
       begin
-        Code := CalledFrom;
+        Code := JumpBack;
         VarStackPos := VarStackP;
         StackPos := StackP;
         MergeJumps(InJump, Jump);
@@ -532,20 +640,20 @@ var
   begin
     tmp := InJump;
     DoDecCall();
-    if (tmp.JumpException.Obj = InJump.JumpException.Obj) and (InJump.JumpException.Obj <> nil) then
+    if (tmp.JumpException = InJump.JumpException) and (InJump.JumpException <> nil) then
       HandleException()
     else if (tmp.JumpSafe = InJump.JumpSafe) and (InJump.JumpSafe <> nil) then
       HandleSafeJump();
   end;
 
-  procedure DoInvokeImportedProc(RecSize: Integer; Ptr: Pointer; ParamSize: TParamSize; StackPosOffset: TStackInc = 0); {$IFDEF Lape_Inline}inline;{$ENDIF}
+  procedure DoInvokeImportedProc(const RecSize: Integer; const Ptr: Pointer; const ParamSize: TParamSize; const StackPosOffset: TStackInc = 0); {$IFDEF Lape_Inline}inline;{$ENDIF}
   begin
     TLapeImportedProc(Ptr)(@Stack[StackPos - ParamSize]);
     Dec(StackPos, ParamSize - StackPosOffset);
     Inc(Code, RecSize + ocSize);
   end;
 
-  procedure DoInvokeImportedFunc(RecSize: Integer; Ptr, Res: Pointer; ParamSize: TParamSize; StackPosOffset: TStackInc = 0); {$IFDEF Lape_Inline}inline;{$ENDIF}
+  procedure DoInvokeImportedFunc(const RecSize: Integer; const Ptr, Res: Pointer; const ParamSize: TParamSize; const StackPosOffset: TStackInc = 0); {$IFDEF Lape_Inline}inline;{$ENDIF}
   begin
     TLapeImportedFunc(Ptr)(@Stack[StackPos - ParamSize], Res);
     Dec(StackPos, ParamSize - StackPosOffset);
@@ -559,6 +667,7 @@ var
   procedure DaLoop; {$IFDEF Lape_Inline}inline;{$ENDIF}
   var
     GoBack: Boolean;
+    i: Integer;
   label
     Start;
   begin
@@ -568,12 +677,24 @@ var
     try
       while (DoContinue = bTrue) do {$I lpinterpreter_opcodecase.inc}
     except
-      {$IFDEF Lape_EmitPos}
-      if (ExceptObject <> InJump.JumpException.Obj) then
-        InJump.JumpException.Pos := PDocPos(PtrUInt(Code) + SizeOf(opCodeType));
-      {$ENDIF}
+      if (InJump.JumpException = nil) or (ExceptObject <> InJump.JumpException.Obj) then
+      begin
+        if (InJump.JumpException = nil) then
+          InJump.JumpException := TJumpException.Create();
 
+        SetLength(InJump.JumpException.StackTraceInfo, CallStackPos);
+        for i := 0 to CallStackPos - 1 do
+        begin
+          InJump.JumpException.StackTraceInfo[i].Address    := CallStack[i].Address;
+          InJump.JumpException.StackTraceInfo[i].CalledFrom := CallStack[i].CalledFrom;
+        end;
+
+        {$IFDEF Lape_EmitPos}
+        InJump.JumpException.Pos := PPointer(PtrUInt(Code) + SizeOf(opCode))^;
+        {$ENDIF}
+      end;
       InJump.JumpException.Obj := Exception(AcquireExceptionObject());
+
       HandleException();
       GoBack := True;
     end;
@@ -595,9 +716,12 @@ var
       goto Start;
   end;
 
+var
+  StackTrace: lpString;
 begin
-  CodeBase := Code;
-  CodeUpper := PByte(PtrUInt(CodeBase) + CodeLen * SizeOf(Byte));
+  Code := PByte(PtrUInt(Emitter.Code) + InitialJump);
+  CodeBase := Emitter.Code;
+  CodeUpper := Emitter.Code + Emitter.CodeLen;
   SetLength(Stack, StackSize);
   SetLength(TryStack, TryStackSize);
   SetLength(CallStack, CallStackSize);
@@ -605,41 +729,46 @@ begin
   VarStackIndex := 0;
   SetLength(VarStackStack, VarStackStackSize);
 
-  VarStackLen := Length(InitialVarStack);
-  if (VarStackLen < VarStackSize) then
-    SetLength(InitialVarStack, VarStackSize);
   VarStackStack[0].Stack := InitialVarStack;
+  if (Length(VarStackStack[0].Stack) < VarStackSize) then
+    SetLength(VarStackStack[0].Stack, VarStackSize);
   VarStack := VarStackStack[0].Stack;
+  VarStackLen := Length(VarStack);
+
+  PreviousException.Exists := False;
+  PreviousException.Msg := '';
+  PreviousException.Loc := NullDocPos;
 
   StackPos := 0;
   VarStackPos := 0;
   TryStackPos := 0;
-  CallStackpos := 0;
+  CallStackPos := 0;
   InJump := InEmptyJump;
 
   try
-    Code := PByte(PtrUInt(CodeBase) + InitialJump);
     DaLoop();
   except
     on E: Exception do
     begin
-      if (E is lpException) and lpException(E).hasDocPos() then
-        LapeExceptionFmt(lpeRuntime, [lpException(E).Error], lpException(E).DocPos)
+      StackTrace := GetStackTrace(Emitter, InJump.JumpException.StackTraceInfo, InJump.JumpException.Pos);
+
+      if IsLapeException(E) then
+        LapeExceptionRuntime(E as lpException, StackTrace)
       else
-      if (E = InJump.JumpException.Obj) and (InJump.JumpException.Pos <> nil) then
-        LapeExceptionFmt(lpeRuntime, [E.Message], InJump.JumpException.Pos^)
+      if (InJump.JumpException <> nil) and (E = InJump.JumpException.Obj) and (InJump.JumpException.Pos <> nil) then
+        LapeExceptionRuntime(E, StackTrace, InJump.JumpException.Pos^)
       else
-        LapeExceptionFmt(lpeRuntime, [E.Message]);
+        LapeExceptionRuntime(E, StackTrace, NullDocPos);
     end;
   end;
 end;
 
-procedure RunCode(Code: PByte; CodeLen: Integer; InitialVarStack: TByteArray; InitialJump: TCodePos);
+procedure RunCode(const Emitter: TLapeCodeEmitter; const InitialVarStack: TByteArray; const InitialJump: TCodePos);
 var
   DoContinue: TInitBool;
 begin
   DoContinue := bTrue;
-  RunCode(Code, CodeLen, DoContinue, InitialVarStack, InitialJump);
+  RunCode(Emitter, DoContinue, InitialVarStack, InitialJump);
 end;
 
 end.
