@@ -1,0 +1,1 @@
+Can't assign "Pointer" to "strict Pointer(TTest2)" at line 13, column 6 in file "Operators_StrictPointer.lap"

@@ -352,6 +352,15 @@ type
     property PConst: Boolean read FPConst;
   end;
 
+  TLapeType_StrictPointer = class(TLapeType_Pointer)
+  protected
+    function getAsString: String; override;
+  public
+    function EvalRes(Op: EOperator; Right: TLapeType = nil; Flags: ELapeEvalFlags = []): TLapeType; override;
+  end;
+
+  TLapeType_NilPointer = class(TLapeType_Pointer);
+
   TLapeType_Label = class(TLapeType_Pointer)
   public
     constructor Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; virtual;
@@ -359,9 +368,6 @@ type
     function EvalConst(Op: EOperator; Left, Right: TLapeGlobalVar; Flags: ELapeEvalFlags): TLapeGlobalVar; override;
     function Eval(Op: EOperator; var Dest: TResVar; Left, Right: TResVar; Flags: ELapeEvalFlags; var Offset: Integer; Pos: PDocPos = nil): TResVar; override;
   end;
-
-  ELapeHintDirective = (lhdDeprecated, lhdExperimental, lhdUnImplemented);
-  ELapeHintDirectives = set of ELapeHintDirective;
 
   TLapeType_Method = class(TLapeType)
   protected
@@ -376,8 +382,6 @@ type
     ImplicitParams: Integer;
     Res: TLapeType;
     IsOperator: Boolean;
-    HintDirectives: ELapeHintDirectives;
-    DeprecatedHint: lpString;
 
     constructor Create(ACompiler: TLapeCompilerBase; AParams: TLapeParameterList; ARes: TLapeType = nil; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; overload; virtual;
     constructor Create(ACompiler: TLapeCompilerBase; AParams: array of TLapeType; AParTypes: array of ELapeParameterType; AParDefaults: array of TLapeGlobalVar; ARes: TLapeType = nil; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; overload; virtual;
@@ -640,6 +644,7 @@ type
     FOptions_PackRecords: UInt8;
 
     FOnHint: TLapeHint;
+    FHints: lpString;
 
     procedure Reset; virtual;
     procedure setEmitter(AEmitter: TLapeCodeEmitter); virtual;
@@ -712,6 +717,7 @@ type
     property Options: ECompilerOptionsSet read FOptions write setOptions default Lape_OptionsDef;
     property Options_PackRecords: UInt8 read FBaseOptions_PackRecords write setPackRecords default Lape_PackRecordsDef;
     property OnHint: TLapeHint read FOnHint write FOnHint;
+    property Hints: lpString read FHints; // if OnHint=nil, this will have them
   end;
 
 procedure RequireOperators(Compiler: TLapeCompilerBase; ops: array of EOperator; Typ: TLapeType; DocPos: TDocPos); overload;
@@ -2270,6 +2276,7 @@ begin
   Result := TLapeClassType(Self.ClassType).Create(FCompiler, FPType, FPConst, Name, @_DocPos);
   Result.inheritManagedDecls(Self, not DeepCopy);
   Result.TypeID := TypeID;
+  Result.CopyHints(Self);
 end;
 
 function TLapeType_Pointer.NewGlobalVar(Ptr: Pointer = nil; AName: lpString = ''; ADocPos: PDocPos = nil; AsValue: Boolean = True): TLapeGlobalVar;
@@ -2440,6 +2447,19 @@ begin
   end;
 end;
 
+function TLapeType_StrictPointer.getAsString: String;
+begin
+  Result := 'strict Pointer(' + Name + ')';
+end;
+
+function TLapeType_StrictPointer.EvalRes(Op: EOperator; Right: TLapeType; Flags: ELapeEvalFlags): TLapeType;
+begin
+  if (not (Right is TLapeType_NilPointer)) and (op = op_Assign) and (Right <> Self) then
+    Result := nil
+  else
+    Result := inherited EvalRes(Op, Right, Flags);
+end;
+
 constructor TLapeType_Label.Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil);
 begin
   inherited Create(ACompiler, nil, True, AName, ADocPos);
@@ -2552,10 +2572,6 @@ begin
     AParams := TLapeParameterList.Create(NullParameter, dupAccept, False);
   FParams := AParams;
   Res := ARes;
-
-  IsOperator := False;
-  HintDirectives := [];
-  DeprecatedHint := '';
 end;
 
 constructor TLapeType_Method.Create(ACompiler: TLapeCompilerBase; AParams: array of TLapeType; AParTypes: array of ELapeParameterType; AParDefaults: array of TLapeGlobalVar; ARes: TLapeType = nil; AName: lpString = ''; ADocPos: PDocPos = nil);
@@ -2584,12 +2600,12 @@ begin
 
   ImplicitParams := AMethod.ImplicitParams;
   IsOperator := AMethod.IsOperator;
-  DeprecatedHint := AMethod.DeprecatedHint;
-  HintDirectives := AMethod.HintDirectives;
 
   inheritManagedDecls(AMethod);
   TypeID := AMethod.TypeID;
   FBaseType := AMethod.FBaseType;
+
+  CopyHints(AMethod);
 end;
 
 function TLapeType_Method.CreateCopy(DeepCopy: Boolean = False): TLapeType;
@@ -2606,12 +2622,11 @@ begin
 
   TLapeType_Method(Result).ImplicitParams := ImplicitParams;
   TLapeType_Method(Result).IsOperator := IsOperator;
-  TLapeType_Method(Result).DeprecatedHint := DeprecatedHint;
-  TLapeType_Method(Result).HintDirectives := HintDirectives;
 
   Result.inheritManagedDecls(Self, not DeepCopy);
   Result.TypeID := TypeID;
   Result.FBaseType := FBaseType;
+  Result.CopyHints(Self);
 end;
 
 destructor TLapeType_Method.Destroy;
@@ -2986,6 +3001,7 @@ begin
   Result.inheritManagedDecls(Self, not DeepCopy);
   Result.TypeID := TypeID;
   Result.FBaseType := FBaseType;
+  Result.CopyHints(Self);
 end;
 
 function TLapeType_MethodOfType.Equals(Other: TLapeType; ContextOnly: Boolean = True): Boolean;
@@ -4058,6 +4074,7 @@ procedure TLapeCompilerBase.Reset;
 begin
   FOptions := FBaseOptions;
   FOptions_PackRecords := FBaseOptions_PackRecords;
+  FHints := '';
 
   if (FEmitter <> nil) then
     FEmitter.Reset();
@@ -4649,8 +4666,11 @@ end;
 
 procedure TLapeCompilerBase.Hint(Msg: lpString; Args: array of const; ADocPos: TDocPos);
 begin
+  Msg := FormatLocation(Format(Msg, Args), ADocPos);
   if ({$IFNDEF FPC}@{$ENDIF}FOnHint <> nil) then
-    FOnHint(Self, FormatLocation(Format(Msg, Args), ADocPos));
+    FOnHint(Self, Msg)
+  else
+    FHints := FHints + Msg + LineEnding;
 end;
 
 initialization

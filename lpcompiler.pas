@@ -117,7 +117,6 @@ type
 
     function GetEqualsMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
     function GetToStringMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
-    function GetIsEnumGapMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType;  AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar; virtual;
 
     procedure InitBaseDefinitions; virtual;
     procedure InitBaseMath; virtual;
@@ -142,6 +141,8 @@ type
     function Peek: EParserToken; virtual;
     function Expect(Token: EParserToken; NextBefore: Boolean = True; NextAfter: Boolean = False): EParserToken; overload; virtual;
     function Expect(Tokens: EParserTokenSet; NextBefore: Boolean = True; NextAfter: Boolean = False): EParserToken; overload; virtual;
+
+    procedure ParseDeclHint(Decl: TLapeDeclaration; NextBefore: Boolean = False; NextAfter: Boolean = True); virtual;
 
     procedure ParseExpressionEnd(Token: EParserToken; NextBefore: Boolean = False; NextAfter: Boolean = True); overload; virtual;
     procedure ParseExpressionEnd(Tokens: EParserTokenSet = ParserToken_ExpressionEnd; NextBefore: Boolean = False; NextAfter: Boolean = True); overload; virtual;
@@ -782,100 +783,6 @@ begin
     FreeAndNil(Result);
 end;
 
-function TLapeCompiler.GetIsEnumGapMethod(Sender: TLapeType_OverloadedMethod; AType: TLapeType_Method; AObjectType: TLapeType; AParams: TLapeTypeArray = nil; AResult: TLapeType = nil): TLapeGlobalVar;
-var
-  Method: TLapeTree_Method;
-  Statement: TLapeTree_Operator;
-  EnumType: TLapeType_Enum;
-  i: Integer;
-  ParamVar, ResultVar: TResVar;
-  LoopVar, GapVar, IndexVar, ArrayVar: TLapeGlobalVar;
-  Loop, Gap: Integer;
-begin
-  Result := nil;
-  Method := nil;
-  GetMethod_FixupParams(AType, AParams, AResult);
-
-  if (Sender = nil) or (Length(AParams) <> 1) or (not (AParams[0] is TLapeType_Enum)) or (AResult = nil) then
-    Exit;
-
-  if (AType = nil) then
-    AType := addManagedType(TLapeType_Method.Create(Self, [AParams[0]], [lptConst], [TLapeGlobalVar(nil)], AResult)) as TLapeType_Method;
-
-  IncStackInfo();
-  try
-    Result := AType.NewGlobalVar(EndJump);
-    Result.VarType.Name := '_IsEnumGap';
-    Sender.addMethod(Result);
-
-    Method := TLapeTree_Method.Create(Result, FStackInfo, Self);
-    Method.Statements := TLapeTree_StatementList.Create(Self);
-
-    EnumType := TLapeType_Enum(AParams[0]);
-
-    ParamVar := _ResVar.New(FStackInfo.addVar(lptConst, getBaseType(EnumType.BaseIntType), 'Param')).IncLock();
-    ResultVar := _ResVar.New(FStackInfo.addVar(lptOut, AResult, 'Result')).IncLock();
-
-    if (EnumType.GapCount = 0) then
-    begin
-      Statement := TLapeTree_Operator.Create(op_Assign, Self);
-      with Statement do
-      begin
-        Left := TLapeTree_ResVar.Create(ResultVar.IncLock(), Self);
-        Right := TLapeTree_GlobalVar.Create('False', ltEvalBool, Self);
-      end;
-    end else
-    begin
-      with addManagedType(TLapeType_DynArray.Create(getBaseType(ltInt32), Self)) as TLapeType_DynArray do
-      begin
-        Loop := 0;
-        Gap := 0;
-
-        LoopVar := getBaseType(ltInt32).NewGlobalVarP(@Loop);
-        GapVar := getBaseType(ltInt32).NewGlobalVarP(@Gap);
-        ArrayVar := NewGlobalVarP();
-
-        VarSetLength(PPointer(ArrayVar.Ptr)^, EnumType.GapCount);
-
-        for i := 0 to EnumType.MemberMap.Count - 1 do
-          if EnumType.MemberMap[i] = '' then
-          try
-            Gap := EnumType.Range.Lo + i;
-
-            IndexVar := EvalConst(op_Index, ArrayVar, LoopVar, [lefAssigning]);
-            IndexVar.VarType.EvalConst(op_Assign, IndexVar, GapVar, []);
-
-            Inc(Loop);
-          finally
-            if (IndexVar <> nil) then
-              FreeAndNil(IndexVar);
-          end;
-
-        LoopVar.Free();
-        GapVar.Free();
-
-        Statement := TLapeTree_Operator.Create(op_Assign, Self);
-        with Statement do
-        begin
-          Left := TLapeTree_ResVar.Create(ResultVar.IncLock(), Self);
-          Right := TLapeTree_InternalMethod_Contains.Create(Self);
-          with TLapeTree_InternalMethod_Contains(Right) do
-          begin
-            addParam(TLapeTree_ResVar.Create(ParamVar.IncLock(), Self));
-            addParam(TLapeTree_GlobalVar.Create(ArrayVar, Self));
-          end;
-        end;
-      end;
-    end;
-
-    Method.Statements.addStatement(Statement);
-
-    addDelayedExpression(Method);
-  finally
-    DecStackInfo(True, False, Method = nil);
-  end;
-end;
-
 procedure TLapeCompiler.InitBaseDefinitions;
 
   procedure addCompilerFuncs;
@@ -964,6 +871,7 @@ begin
 
   addCompilerFuncs();
   addGlobalVar(addManagedType(TLapeType_SystemUnit.Create(Self)).NewGlobalVarP(nil), 'System').isConstant := True;
+  addGlobalVar(addManagedType(TLapeType_NilPointer.Create(Self, nil, False)).NewGlobalVarP(), 'nil');
 
   addGlobalType(TLapeType_Label.Create(Self), '!label');
   addGlobalType(TLapeType_Pointer.Create(Self, nil, True), 'ConstPointer');
@@ -991,7 +899,7 @@ begin
     'const                  ' + LineEnding +
     '  True  = EvalBool(1); ' + LineEnding +
     '  False = EvalBool(0); ' + LineEnding +
-    '  nil   = Pointer(0);  ',
+    '',
     '!InitBaseDefinitions'
   );
 
@@ -1059,7 +967,6 @@ begin
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetLessThanMethod).NewGlobalVar('_LessThan'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetGreaterThanMethod).NewGlobalVar('_GreaterThan'));
   addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetEqualsMethod).NewGlobalVar('_Equals'));
-  addGlobalVar(NewMagicMethod({$IFDEF FPC}@{$ENDIF}GetIsEnumGapMethod).NewGlobalVar('_IsEnumGap'));
 
   InitBaseMath();
   InitBaseString();
@@ -1670,6 +1577,42 @@ begin
     Next();
 end;
 
+procedure TLapeCompiler.ParseDeclHint(Decl: TLapeDeclaration; NextBefore: Boolean; NextAfter: Boolean);
+begin
+  if NextBefore then
+    Next();
+  Assert(Tokenizer.Tok in [tk_kw_Deprecated, tk_kw_Experimental, tk_kw_UnImplemented]);
+
+  case Tokenizer.Tok of
+    tk_kw_Deprecated:
+      begin
+        if (Peek() in ParserToken_Strings) then
+        begin
+          Next();
+          Decl.AddHint(ldhDeprecated, Copy(Tokenizer.TokString, 2, Tokenizer.TokLen - 2));
+        end else
+          Decl.AddHint(ldhDeprecated);
+
+        if NextAfter then
+          Next();
+      end;
+
+    tk_kw_Experimental:
+      begin
+        Decl.AddHint(ldhExperimental);
+        if NextAfter then
+          Next();
+      end;
+
+    tk_kw_UnImplemented:
+      begin
+        Decl.AddHint(ldhUnImplemented);
+        if NextAfter then
+          Next();
+      end;
+  end;
+end;
+
 procedure TLapeCompiler.ParseExpressionEnd(Token: EParserToken; NextBefore: Boolean = False; NextAfter: Boolean = True);
 begin
   if (not (lcoLooseSemicolon in FOptions)) then
@@ -2049,28 +1992,6 @@ var
     end;
   end;
 
-  procedure AddDirectiveHint(Tok: EParserToken);
-  begin
-    with TLapeType_Method(Result.Method.VarType) do
-      case Tok of
-        tk_kw_Deprecated:
-          begin
-            Include(HintDirectives, lhdDeprecated);
-
-            if (Tokenizer.Expect([tk_typ_String, tk_typ_HereString, tk_sym_SemiColon]) in [tk_typ_HereString, tk_typ_String]) then
-              DeprecatedHint := lpString(Copy(Tokenizer.TokString, 2, Tokenizer.TokLen - 2));
-          end;
-        tk_kw_UnImplemented:
-          Include(HintDirectives, lhdUnImplemented);
-        tk_kw_Experimental:
-          Include(HintDirectives, lhdExperimental);
-      end;
-
-    if (Tokenizer.Tok <> tk_sym_SemiColon) then
-      ParseExpressionEnd(tk_sym_SemiColon, True, False);
-    if (Tokenizer.Tok = tk_sym_SemiColon) and (Tokenizer.PeekNoJunk() in [tk_kw_Deprecated, tk_kw_UnImplemented, tk_kw_Experimental]) then
-      Tokenizer.NextNoJunk();
-  end;
 
 begin
   Result := nil;
@@ -2090,7 +2011,7 @@ begin
     ResetStack := False;
 
   try
-    isNext([tk_kw_UnImplemented, tk_kw_Experimental, tk_kw_Deprecated, tk_kw_External, tk_kw_Forward, tk_kw_Overload, tk_kw_Override, tk_kw_Static]);
+    isNext([tk_kw_External, tk_kw_Forward, tk_kw_Overload, tk_kw_Override, tk_kw_Static] + ParserToken_Hints);
     OldDeclaration := getDeclarationNoWith(FuncName, FStackInfo.Owner);
     LocalDecl := (OldDeclaration <> nil) and hasDeclaration(OldDeclaration, FStackInfo.Owner, True, False);
 
@@ -2105,7 +2026,7 @@ begin
         RemoveSelfVar();
         FuncHeader := TLapeType_Method(addManagedType(TLapeType_Method.Create(FuncHeader)));
       end;
-      isNext([tk_kw_UnImplemented, tk_kw_Experimental, tk_kw_Deprecated, tk_kw_External, tk_kw_Forward, tk_kw_Overload, tk_kw_Override]);
+      isNext([tk_kw_External, tk_kw_Forward, tk_kw_Overload, tk_kw_Override] + ParserToken_Hints);
     end
     else if (not isExternal) and (not MethodOfObject(FuncHeader)) then
       FuncHeader := InheritMethodStack(FuncHeader, FStackInfo.Owner);
@@ -2160,7 +2081,7 @@ begin
           LapeException(lpString(E.Message), Tokenizer.DocPos);
         end;
 
-        isNext([tk_kw_UnImplemented, tk_kw_Experimental, tk_kw_Deprecated, tk_kw_External, tk_kw_Forward]);
+        isNext([tk_kw_External, tk_kw_Forward] + ParserToken_Hints);
       end
       else if (Tokenizer.Tok = tk_kw_Override) then
       begin
@@ -2284,8 +2205,12 @@ begin
         Exit;
       end;
 
-      while (Tokenizer.Tok in [tk_kw_Deprecated, tk_kw_Experimental, tk_kw_UnImplemented]) do
-        AddDirectiveHint(Tokenizer.Tok);
+      while (Tokenizer.Tok in ParserToken_Hints) do
+      begin
+        ParseDeclHint(Result.Method.VarType);
+        if (Peek() in ParserToken_Hints) then
+          Next();
+      end;
 
       if isExternal then
         Exit;
@@ -2441,6 +2366,7 @@ function TLapeCompiler.ParseType(TypeForwards: TLapeTypeForwards; addToStackOwne
           FieldValue := Expression.Evaluate();
           if (FieldType = nil) then
             FieldType := FieldValue.VarType;
+          Expression.Free();
         end;
 
         Rec.addClassField(FieldType, FieldValue, Identifiers[0], True);
@@ -2477,7 +2403,7 @@ function TLapeCompiler.ParseType(TypeForwards: TLapeTypeForwards; addToStackOwne
       LapeException(lpeInvalidRange, Tokenizer.DocPos);
 
     try
-      Result := addManagedType(TLapeType_Set.Create(TLapeType_SubRange(SetType), Self, '', GetPDocPos));
+      Result := addManagedType(TLapeType_Set.Create(TLapeType_SubRange(SetType), Self, '', getPDocPos));
     except on E: lpException do
       LapeException(lpString(E.Message), Tokenizer.DocPos);
     end;
@@ -2490,6 +2416,21 @@ function TLapeCompiler.ParseType(TypeForwards: TLapeTypeForwards; addToStackOwne
     DocPos: TDocPos;
   begin
     DocPos := Tokenizer.DocPos;
+
+    if (Tokenizer.Tok = tk_kw_Strict) then
+    begin
+      Expect(tk_Identifier);
+      PointerType := TLapeType(getDeclarationNoWith(Tokenizer.TokString));
+      if not (PointerType is TLapeType_Pointer) then
+        LapeException(lpeExpectedPointerType, DocPos);
+
+      if (PointerType.ClassType = TLapeType_Pointer) then
+        Result := addManagedType(TLapeType_StrictPointer.Create(Self, nil, False, '', @DocPos))
+      else
+        Result := addManagedType(PointerType.CreateCopy(True));
+
+      Exit;
+    end;
 
     Expect([tk_kw_Const, tk_Identifier], True, False);
 
@@ -2641,7 +2582,7 @@ function TLapeCompiler.ParseType(TypeForwards: TLapeTypeForwards; addToStackOwne
 
   procedure ParseDef;
   var
-    TypeExpr: TlapeTree_Base;
+    TypeExpr: TLapeTree_Base;
     Range: TLapeRange;
     RangeType: TLapeType;
   begin
@@ -2703,14 +2644,21 @@ begin
           Expect(tk_kw_Record, True, False);
           ParseRecord(True);
         end;
-      tk_sym_Caret: ParsePointer();
+      tk_sym_Caret, tk_kw_Strict: ParsePointer();
       tk_kw_Enum, tk_sym_ParenthesisOpen: ParseEnum();
-      tk_kw_Function, tk_kw_Procedure, tk_kw_Operator,
-      tk_kw_External, {tk_kw_Export,} tk_kw_Private: ParseMethodType();
+      tk_kw_Function, tk_kw_Procedure, tk_kw_Operator, tk_kw_External, tk_kw_Private: ParseMethodType();
       tk_kw_Type: ParseTypeType();
       else ParseDef();
     end;
 
+    if (Result <> nil) then
+      if (TypeForwards = nil) and (lcoHints in FOptions) and Result.HasHints() then
+        Result.WriteHints(@Hint, Tokenizer.DocPos)
+      else
+      // TypeForwards<>nil means ParseTypeBlock
+      // type TPoint = record X,Y: Integer deprecated;
+      if (TypeForwards <> nil) and (Peek() in ParserToken_Hints) then
+        ParseDeclHint(Result, True, False);
   except
     if (Result <> nil) then
       FreeAndNil(Result);
@@ -2788,6 +2736,8 @@ var
   DefConst: TLapeGlobalVar;
   VarDecl: TLapeVarDecl;
 begin
+  ValidEnd := ValidEnd + [tk_kw_Deprecated, tk_kw_UnImplemented, tk_kw_Experimental];
+
   Result := TLapeTree_VarList.Create(Self, getPDocPos());
   try
     isConst := (Tokenizer.Tok = tk_kw_Const);
@@ -2873,6 +2823,10 @@ begin
 
         if (VarDecl.VarDecl is TLapeVar) then
           TLapeVar(VarDecl.VarDecl).setReadWrite(isConst and (DefConst <> nil), not isConst);
+
+        // var a: Integer deprecated
+        if (Tokenizer.Tok in ParserToken_Hints) then
+          ParseDeclHint(VarDecl.VarDecl);
 
         Result.addVar(VarDecl);
       end;
@@ -3559,12 +3513,56 @@ begin
 end;
 
 function TLapeCompiler.ParseFor(ExprEnd: EParserTokenSet = ParserToken_ExpressionEnd): TLapeTree_For;
+
+  // for i:=0 to 1000 do/downto
+  // for 1 to 10 do/downto
+  procedure parseForTo(counterExpr: TLapeTree_ExprBase);
+  begin
+    case Tokenizer.Tok of
+      tk_kw_DownTo: Result.LoopType := lptypes.loopDown;
+      tk_kw_To    : Result.LoopType := lptypes.loopUp;
+    end;
+
+    Next;
+
+    Result.Counter := counterExpr;
+    Result.Limit := TLapeTree_ExprBase(ParseExpression([], False).setExpectedType(Result.Counter.resType));
+  end;
+
+  // for i in arr
+  // "i in arr" is TLapeTree_Operator (op=in, left=i, right=arr);
+  procedure parseForOver(counterExpr: TLapeTree_ExprBase);
+  var
+    LimitType: TLapeType;
+  begin
+    Result.Counter := TLapeTree_Operator(counterExpr).Left;
+    Result.LoopType := loopOver;
+    Result.LoopOverWhat := loopOverArray;
+
+    if (TLapeTree_Operator(counterExpr).Right.resType() is TLapeType_Set) then
+      Result.LoopOverWhat := loopOverSet
+    else
+    if (TLapeTree_Operator(counterExpr).Right.resType() is TLapeType_SubRange) or
+       (TLapeTree_Operator(counterExpr).Right.resType() is TLapeType_TypeEnum) then
+      Result.LoopOverWhat := loopOverEnum;
+
+    if Result.LoopOverWhat in [loopOverEnum, loopOverSet] then
+      Result.Limit := TLapeTree_Operator(counterExpr).Right
+    else
+    begin
+      LimitType := addManagedType(TLapeType_DynArray.Create(Result.Counter.resType(), Self, '', getPDocPos()));
+      with TLapeTree_Operator(counterExpr).Right do
+      begin
+        Parent := Result;
+        Result.Limit := TLapeTree_ExprBase(setExpectedType(LimitType));
+      end;
+    end;
+    counterExpr.Free();
+  end;
+
 var
-  LimitType: TLapeType;
-  tmpExpr:TLapeTree_ExprBase;
-  basicLoopOver:Boolean;
+  Expr: TLapeTree_ExprBase;
 begin
-  basicLoopOver := False;
   Result := TLapeTree_For.Create(Self, getPDocPos());
 
   try
@@ -3592,58 +3590,16 @@ begin
       end;
     end else
     begin
-      tmpExpr := ParseExpression();
-      if Tokenizer.Tok in [tk_kw_To, tk_kw_DownTo] then
-      begin
-        Next;
-        Result.Counter := tmpExpr;
-      end
-      else if (tmpExpr is TLapeTree_Operator) and (TLapeTree_Operator(tmpExpr).OperatorType = op_In) then
-      begin
-        Result.Counter := TLapeTree_Operator(tmpExpr).Left;
-        Result.LoopType := lptypes.loopOver;
-        basicLoopOver := True;
-      end
+      Expr := ParseExpression();
+
+      if (Tokenizer.Tok in [tk_kw_To, tk_kw_DownTo]) then
+        parseForTo(Expr)
+      else
+      if (Expr is TLapeTree_Operator) and (TLapeTree_Operator(Expr).OperatorType = op_In) then
+        parseForOver(Expr)
       else
         LapeException(lpeVariableExpected, DocPos);
     end;
-
-    if (not basicLoopOver) then
-      case Tokenizer.LastTok of
-        tk_kw_DownTo: Result.LoopType := lptypes.loopDown;
-        tk_kw_To    : Result.LoopType := lptypes.loopUp;
-        tk_op_In    : Result.LoopType := lptypes.loopOver;
-        else LapeException(lpeImpossible, DocPos);
-      end;
-
-    LimitType := Result.Counter.resType();
-    if (Result.LoopType = loopOver) then
-    begin
-      if basicLoopOver and (LimitType is TLapeType_Enum) then
-      begin
-        Result.Limit := TLapeTree_Operator(tmpExpr).Right;
-        if Result.Limit.resType() is TLapeType_Set then
-          Result.LoopType := loopOverSet
-        else
-          Result.LoopType := loopOverEnum;
-
-        tmpExpr.Parent := Result;
-      end else
-      begin
-        LimitType := addManagedType(TLapeType_DynArray.Create(LimitType, Self, '', getPDocPos()));
-        if basicLoopOver then
-          with TLapeTree_Operator(tmpExpr).Right do
-          begin
-            Parent := Result;
-            Result.Limit := TLapeTree_ExprBase(setExpectedType(LimitType));
-          end;
-      end;
-
-      tmpExpr.Free();
-    end;
-
-    if (not basicLoopOver) then //whenever it's not the basic: "for item in array do"
-      Result.Limit := TLapeTree_ExprBase(ParseExpression([], False).setExpectedType(LimitType));
 
     Expect([tk_kw_With, tk_kw_Do], False, False);
     if (Tokenizer.Tok = tk_kw_With) then
@@ -3655,7 +3611,6 @@ begin
     Result.Body := ParseStatement(True, ExprEnd + [tk_kw_Else]);
     if (Tokenizer.LastTok = tk_kw_Else) then
       Result.ElseBody := ParseStatement(False, ExprEnd);
-
   except
     Result.Free();
     raise;
@@ -3855,7 +3810,6 @@ begin
   FInternalMethodMap['raise'] := TLapeTree_InternalMethod_Raise;
 
   FInternalMethodMap['Objectify'] := TLapeTree_InternalMethod_Objectify;
-  FInternalMethodMap['IsEnumGap'] := TLapeTree_InternalMethod_IsEnumGap;
 
   FInternalMethodMap['ArrayMin'] := TLapeTree_InternalMethod_ArrayMin;
   FInternalMethodMap['ArrayMax'] := TLapeTree_InternalMethod_ArrayMax;
@@ -4266,11 +4220,14 @@ begin
 
   try
     Decl := getDeclaration(AName, AStackInfo, LocalOnly);
-  except on E: lpException do
-    if (Pos = nil) then
-      LapeException(lpString(E.Message))
-    else
-      LapeException(lpString(E.Message), Pos^)
+    if (lcoHints in FOptions) and (Decl is TLapeVar) and TLapeVar(Decl).HasHints() then
+      TLapeVar(Decl).WriteHints(@Hint, Tokenizer.DocPos);
+  except
+    on E: lpException do
+      if (Pos = nil) then
+        LapeException(lpString(E.Message))
+      else
+        LapeException(lpString(E.Message), Pos^)
   end;
 
   if (Decl <> nil) then
