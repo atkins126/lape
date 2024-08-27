@@ -136,38 +136,42 @@ const
     'type'                                                                                   + LineEnding +
     '  PSizeInt = ^SizeInt;'                                                                 + LineEnding +
     'var'                                                                                    + LineEnding +
-    '  i, j, Len: SizeInt;'                                                                  + LineEnding +
-    '  Src: Pointer;'                                                                        + LineEnding +
+    '  I, Len, NewLen: SizeInt;'                                                             + LineEnding +
+    '  Cur: Pointer;'                                                                        + LineEnding +
+    '  Upper: PtrUInt;'                                                                      + LineEnding +
     'begin'                                                                                  + LineEnding +
     '  if (p = nil) then'                                                                    + LineEnding +
     '    Exit;'                                                                              + LineEnding +
     ''                                                                                       + LineEnding +
+    '  NewLen := 0;'                                                                         + LineEnding +
     '  Len := PSizeInt(p)[-1]^' {$IFDEF FPC}+'+1'{$ENDIF}+';'                                + LineEnding +
-    '  while (i < Len) do'                                                                   + LineEnding +
+    '  Upper := PtrUInt(p + (Len * ElSize));'                                                + LineEnding +
+    '  Cur := p;'                                                                            + LineEnding +
+    ''                                                                                       + LineEnding +
+    '  while (PtrUInt(Cur) < Upper) do'                                                      + LineEnding +
     '  begin'                                                                                + LineEnding +
-    '    Src := p[i * ElSize];'                                                              + LineEnding +
-    ''                                                                                       + LineEnding +
-    '    j := i + 1;'                                                                        + LineEnding +
-    '    while (j < Len) do'                                                                 + LineEnding +
+    '    I := 0;'                                                                            + LineEnding +
+    '    while (I < NewLen) do'                                                              + LineEnding +
     '    begin'                                                                              + LineEnding +
-    '      if Equals(p[i * ElSize]^, p[j * ElSize]^) then'                                   + LineEnding +
-    '      begin'                                                                            + LineEnding +
-    '        if (Pointer(Copy) = nil) then'                                                  + LineEnding +
-    '          Move(Src^, p[j * ElSize]^, ElSize)'                                           + LineEnding +
-    '        else'                                                                           + LineEnding +
-    '          Copy(Src^, p[j * ElSize]^);'                                                  + LineEnding +
-    ''                                                                                       + LineEnding +
-    '        Dec(Len);'                                                                      + LineEnding +
-    '        Dec(j);'                                                                        + LineEnding +
-    '      end;'                                                                             + LineEnding +
-    ''                                                                                       + LineEnding +
-    '      Inc(j);'                                                                          + LineEnding +
+    '      if Equals(Cur^, p[I * ElSize]^) then'                                             + LineEnding +
+    '        Break;'                                                                         + LineEnding +
+    '      Inc(I);'                                                                          + LineEnding +
     '    end;'                                                                               + LineEnding +
     ''                                                                                       + LineEnding +
-    '    Inc(i);'                                                                            + LineEnding +
+    '    if (I = NewLen) then'                                                               + LineEnding +
+    '    begin'                                                                              + LineEnding +
+    '      if (Pointer(Copy) = nil) then'                                                    + LineEnding +
+    '        Move(Cur^, p[NewLen * ElSize]^, ElSize)'                                        + LineEnding +
+    '      else'                                                                             + LineEnding +
+    '        Copy(Cur^, p[NewLen * ElSize]^);'                                               + LineEnding +
+    ''                                                                                       + LineEnding +
+    '      Inc(NewLen);'                                                                     + LineEnding +
+    '    end;'                                                                               + LineEnding +
+    ''                                                                                       + LineEnding +
+    '    Inc(Cur, ElSize);'                                                                  + LineEnding +
     '  end;'                                                                                 + LineEnding +
     ''                                                                                       + LineEnding +
-    '  _ArraySetLength(p, Len, ElSize, Dispose, nil);'                                       + LineEnding +
+    '  _ArraySetLength(p, NewLen, ElSize, Dispose, nil);'                                    + LineEnding +
     'end;';
 
   _LapeArrayMode: lpString =
@@ -272,7 +276,7 @@ begin
 
   with TLapeTree_InternalMethod_Length.Create(Self) do
   try
-    addParam(TLapeTree_ResVar.Create(ArrayVar.IncLock(), Self));
+    addParam(TLapeTree_ResVar.Create(ArrayVar, Self));
 
     LengthVar := FoldConstants(False).Compile(Offset);
   finally
@@ -296,8 +300,6 @@ begin
 
     Compile(Offset).Spill(1);
   finally
-    ArrayVar.Spill(1);
-    ArrayPointerVar.Spill(1);
     LengthVar.Spill(1);
     WeightsVar.Spill(1);
 
@@ -376,7 +378,7 @@ begin
 
   with TLapeTree_InternalMethod_Length.Create(Self) do
   try
-    addParam(TLapeTree_ResVar.Create(ArrayVar.IncLock(), Self));
+    addParam(TLapeTree_ResVar.Create(ArrayVar, Self));
 
     LengthVar := FoldConstants(False).Compile(Offset);
   finally
@@ -399,8 +401,6 @@ begin
 
     Compile(Offset);
   finally
-    ArrayVar.Spill(1);
-    ArrayPointerVar.Spill(1);
     LengthVar.Spill(1);
     CompareVar.Spill(1);
 
@@ -452,7 +452,7 @@ begin
 
   with TLapeTree_InternalMethod_Sort.Create(Self) do
   try
-    addParam(TLapeTree_ResVar.Create(Result.IncLock(), Self));
+    addParam(TLapeTree_ResVar.Create(Result, Self));
     while (Self.FParams.Count > 0) do
       addParam(Self.FParams[0]);
 
@@ -462,6 +462,7 @@ begin
   end;
 
   Result.isConstant := True;
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
 end;
 
 function TLapeTree_InternalMethod_Reverse.Compile(var Offset: Integer): TResVar;
@@ -593,6 +594,8 @@ begin
   finally
     Free();
   end;
+
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
 end;
 
 function TLapeTree_InternalMethod_Unique.resType: TLapeType;
@@ -660,11 +663,10 @@ begin
 
     Compile(Offset).Spill(1);
   finally
-    ArrayVar.DecLock();
-
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 
@@ -797,6 +799,7 @@ begin
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 
@@ -895,6 +898,7 @@ begin
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 
@@ -990,6 +994,7 @@ begin
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 
@@ -1085,6 +1090,7 @@ begin
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 
@@ -1145,7 +1151,7 @@ begin
     Body := TLapeTree_Operator.Create(op_Assign, Self);
     with TLapeTree_Operator(Body) do
     begin
-      Left := TLapeTree_ResVar.Create(Result.IncLock(), Self);
+      Left := TLapeTree_ResVar.Create(Result.IncLock(2), Self);
       Right := TLapeTree_Operator.Create(op_Plus, Self);
       with TLapeTree_Operator(Right) do
       begin
@@ -1161,6 +1167,7 @@ begin
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 
@@ -1219,7 +1226,7 @@ begin
     Body := TLapeTree_Operator.Create(op_Assign, Self);
     with TLapeTree_Operator(Body) do
     begin
-      Left := TLapeTree_ResVar.Create(Result.IncLock(), Self);
+      Left := TLapeTree_ResVar.Create(Result.IncLock(2), Self);
 
       Right := TLapeTree_Operator.Create(op_Divide, Self);
       with TLapeTree_Operator(Right) do
@@ -1238,6 +1245,7 @@ begin
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 
@@ -1340,7 +1348,7 @@ begin
       addStatement(TLapeTree_Operator.Create(op_Assign, Self));
       with TLapeTree_Operator(Statements[2]) do
       begin
-        Left := TLapeTree_ResVar.Create(Result.IncLock(), Self);
+        Left := TLapeTree_ResVar.Create(Result.IncLock(2), Self);
         Right := TLapeTree_Operator.Create(op_Divide, Self);
         with TLapeTree_Operator(Right) do
         begin
@@ -1359,6 +1367,7 @@ begin
     Free();
   end;
 
+  Assert((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0));
   Result.isConstant := True;
 end;
 

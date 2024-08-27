@@ -1,21 +1,25 @@
 object Form1: TForm1
-  Left = 1646
+  Left = -979
   Height = 900
-  Top = 235
+  Top = 222
   Width = 800
   Caption = 'Lape'
   ClientHeight = 900
   ClientWidth = 800
   Color = clWindow
   DesignTimePPI = 120
+  KeyPreview = True
+  OnCreate = FormCreate
+  OnKeyDown = FormKeyDown
   Position = poScreenCenter
-  LCLVersion = '2.2.4.0'
+  LCLVersion = '3.4.0.0'
   inline e: TSynEdit
     Left = 0
-    Height = 650
-    Top = 44
+    Height = 672
+    Top = 42
     Width = 800
     Align = alClient
+    Color = cl3DLight
     Font.Height = -18
     Font.Name = 'Courier New'
     Font.Pitch = fpFixed
@@ -24,6 +28,7 @@ object Form1: TForm1
     ParentFont = False
     TabOrder = 1
     BorderStyle = bsNone
+    Gutter.Color = cl3DLight
     Gutter.Width = 74
     Gutter.MouseActions = <    
       item
@@ -35,6 +40,7 @@ object Form1: TForm1
         Button = mbRight
         Command = emcContextMenu
       end>
+    RightGutter.Visible = False
     RightGutter.Width = 0
     RightGutter.MouseActions = <    
       item
@@ -569,6 +575,7 @@ object Form1: TForm1
       '  test(@tpa[1].y);'
       'end;'
     )
+    Options = [eoAutoIndent, eoBracketHighlight, eoGroupUndo, eoHideRightMargin, eoScrollPastEol, eoTabIndent, eoTabsToSpaces, eoTrimTrailingSpaces]
     VisibleSpecialChars = [vscSpace, vscTabAtLast]
     SelectedColor.BackPriority = 50
     SelectedColor.ForePriority = 50
@@ -582,12 +589,13 @@ object Form1: TForm1
     BracketMatchColor.Foreground = clNone
     BracketMatchColor.Style = [fsBold]
     FoldedCodeColor.Background = clNone
-    FoldedCodeColor.Foreground = clGray
+    FoldedCodeColor.Foreground = clNone
     FoldedCodeColor.FrameColor = clGray
     MouseLinkColor.Background = clNone
     MouseLinkColor.Foreground = clBlue
     LineHighlightColor.Background = clNone
     LineHighlightColor.Foreground = clNone
+    TabWidth = 2
     inline SynLeftGutterPartList1: TSynGutterPartList
       object SynGutterMarks1: TSynGutterMarks
         Width = 30
@@ -670,12 +678,12 @@ object Form1: TForm1
     end
   end
   object m: TMemo
-    Left = 4
-    Height = 200
-    Top = 700
-    Width = 796
+    Left = 5
+    Height = 170
+    Top = 725
+    Width = 790
     Align = alBottom
-    BorderSpacing.Left = 4
+    BorderSpacing.Around = 5
     BorderStyle = bsNone
     Font.Height = -20
     ParentFont = False
@@ -686,7 +694,7 @@ object Form1: TForm1
     Cursor = crVSplit
     Left = 0
     Height = 6
-    Top = 694
+    Top = 714
     Width = 800
     Align = alBottom
     Color = clForm
@@ -695,48 +703,69 @@ object Form1: TForm1
   end
   object pnlTop: TPanel
     Left = 0
-    Height = 44
+    Height = 42
     Top = 0
     Width = 800
     Align = alTop
     AutoSize = True
-    ClientHeight = 44
+    ClientHeight = 42
     ClientWidth = 800
     Color = clForm
+    ParentBackground = False
     ParentColor = False
     ParentFont = False
     TabOrder = 0
     object btnRun: TButton
-      Left = 7
+      Left = 6
       Height = 30
-      Top = 7
+      Top = 6
       Width = 51
       Align = alLeft
       AutoSize = True
-      BorderSpacing.Left = 6
-      BorderSpacing.Top = 6
-      BorderSpacing.Bottom = 6
+      BorderSpacing.Around = 5
       Caption = 'Run'
       Default = True
-      OnClick = btnRunClick
       ParentFont = False
       TabOrder = 0
+      OnClick = btnRunClick
     end
     object btnDisassemble: TButton
       AnchorSideLeft.Control = btnRun
       AnchorSideLeft.Side = asrBottom
-      Left = 64
+      Left = 62
       Height = 30
-      Top = 7
+      Top = 6
       Width = 109
       AutoSize = True
-      BorderSpacing.Left = 6
-      BorderSpacing.Top = 6
-      BorderSpacing.Bottom = 6
+      BorderSpacing.Around = 5
       Caption = 'Disassemble'
-      OnClick = btnDisassembleClick
       ParentFont = False
       TabOrder = 1
+      OnClick = btnDisassembleClick
+    end
+    object btnBenchScimark: TButton
+      Left = 591
+      Height = 30
+      Top = 6
+      Width = 132
+      Align = alRight
+      AutoSize = True
+      BorderSpacing.Around = 5
+      Caption = 'Bench - Scimark'
+      TabOrder = 2
+      OnClick = btnBenchClick
+    end
+    object btnBench: TButton
+      Left = 728
+      Height = 30
+      Top = 6
+      Width = 66
+      Align = alRight
+      AutoSize = True
+      BorderSpacing.Around = 5
+      Caption = 'Bench'
+      TabOrder = 3
+      OnClick = btnBenchClick
     end
   end
   object PasSyn: TSynFreePascalSyn
@@ -751,6 +780,7 @@ object Form1: TForm1
     CompilerMode = pcmObjFPC
     NestedComments = True
     TypeHelpers = False
+    StringMultilineMode = []
     Left = 910
     Top = 80
   end

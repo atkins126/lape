@@ -44,7 +44,9 @@ procedure _LapeMove(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF
 procedure _LapeCompareMem(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 
 procedure _LapeSortWeighted_Int32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+procedure _LapeSortWeighted_UInt32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeSortWeighted_Int64(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+procedure _LapeSortWeighted_UInt64(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeSortWeighted_Single(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeSortWeighted_Double(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeSortWeighted_Extended(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -131,7 +133,7 @@ var
   LapeEvalRes: TLapeEvalRes;
   LapeEvalArr: TLapeEvalArr;
 
-  LapeDelayedFlags: lpString = '{$ASSERTIONS ON}{$BOOLEVAL ON}{$CONSTADDRESS ON}{$RANGECHECKS ON}{$AUTOINVOKE OFF}{$AUTOPROPERTIES OFF}{$LOOSESEMICOLON OFF}{$EXTENDEDSYNTAX OFF}{$HINTS OFF}' + LineEnding;
+  LapeDelayedFlags: lpString = '{$ASSERTIONS ON}{$BOOLEVAL ON}{$CONSTADDRESS ON}{$RANGECHECKS ON}{$AUTOINVOKE OFF}{$LOOSESEMICOLON OFF}{$EXTENDEDSYNTAX OFF}{$HINTS OFF}' + LineEnding;
   LapeDelayedTypes: lpString =
     'type'                                                            + LineEnding +
     '  _LapeCompareFunc = private function(constref A, B): Int32;'    + LineEnding +
@@ -647,28 +649,52 @@ begin
 end;
 
 procedure _LapeSortWeighted_Int32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+type
+  Sorter = {$IFDEF FPC}specialize{$ENDIF} TLapeSorter<Int32>;
 begin
-  _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TIntegerArray(Params^[3]^), PEvalBool(Params^[4])^);
+  Sorter.QuickSort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, Sorter.TWeightArr(Params^[3]^), PEvalBool(Params^[4])^);
+end;
+
+procedure _LapeSortWeighted_UInt32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+type
+  Sorter = {$IFDEF FPC}specialize{$ENDIF} TLapeSorter<UInt32>;
+begin
+  Sorter.QuickSort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, Sorter.TWeightArr(Params^[3]^), PEvalBool(Params^[4])^);
 end;
 
 procedure _LapeSortWeighted_Int64(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+type
+  Sorter = {$IFDEF FPC}specialize{$ENDIF} TLapeSorter<Int64>;
 begin
-  _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TInt64Array(Params^[3]^), PEvalBool(Params^[4])^);
+  Sorter.QuickSort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, Sorter.TWeightArr(Params^[3]^), PEvalBool(Params^[4])^);
+end;
+
+procedure _LapeSortWeighted_UInt64(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+type
+  Sorter = {$IFDEF FPC}specialize{$ENDIF} TLapeSorter<UInt64>;
+begin
+  Sorter.QuickSort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, Sorter.TWeightArr(Params^[3]^), PEvalBool(Params^[4])^);
 end;
 
 procedure _LapeSortWeighted_Single(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+type
+  Sorter = {$IFDEF FPC}specialize{$ENDIF} TLapeSorter<Single>;
 begin
-  _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TSingleArray(Params^[3]^), PEvalBool(Params^[4])^);
+  Sorter.QuickSort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, Sorter.TWeightArr(Params^[3]^), PEvalBool(Params^[4])^);
 end;
 
 procedure _LapeSortWeighted_Double(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+type
+  Sorter = {$IFDEF FPC}specialize{$ENDIF} TLapeSorter<Double>;
 begin
-  _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TDoubleArray(Params^[3]^), PEvalBool(Params^[4])^);
+  Sorter.QuickSort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, Sorter.TWeightArr(Params^[3]^), PEvalBool(Params^[4])^);
 end;
 
 procedure _LapeSortWeighted_Extended(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+type
+  Sorter = {$IFDEF FPC}specialize{$ENDIF} TLapeSorter<Extended>;
 begin
-  _Sort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, TExtendedArray(Params^[3]^), PEvalBool(Params^[4])^);
+  Sorter.QuickSort(PByte(Params^[0]^), PSizeInt(Params^[1])^, PSizeInt(Params^[2])^, Sorter.TWeightArr(Params^[3]^), PEvalBool(Params^[4])^);
 end;
 
 procedure _LapeReverse(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}

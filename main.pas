@@ -6,23 +6,29 @@ interface
 
 uses
   Classes, SysUtils, FileUtil, Forms, Controls, Graphics, Dialogs,
-  StdCtrls, ExtCtrls, SynEdit, SynHighlighterPas,
+  StdCtrls, ExtCtrls, SynEdit, SynGutter, SynHighlighterPas,
   lptypes, lpvartypes;
 
 type
   TForm1 = class(TForm)
     btnRun: TButton;
     btnDisassemble: TButton;
+    btnBenchScimark: TButton;
+    btnBench: TButton;
     e: TSynEdit;
     m: TMemo;
     pnlTop: TPanel;
     Splitter1: TSplitter;
     PasSyn: TSynFreePascalSyn;
+
     procedure btnDisassembleClick(Sender: TObject);
     procedure btnRunClick(Sender: TObject);
+    procedure btnBenchClick(Sender: TObject);
+    procedure FormCreate(Sender: TObject);
+    procedure FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
   private
     procedure WriteHint(Sender: TLapeCompilerBase; Msg: lpString);
-  end; 
+  end;
 
 var
   Form1: TForm1;
@@ -30,9 +36,29 @@ var
 implementation
 
 uses
+  {$IFDEF WINDOWS}
+  Windows,
+  {$ENDIF}
   lpparser, lpcompiler, lputils, lpeval, lpinterpreter, lpdisassembler, lpmessages, lpffi, ffi;
 
 {$R *.lfm}
+
+function HighResolutionTime: Double;
+{$IFDEF WINDOWS}
+var
+  Frequency: Int64 = 0;
+  Count: Int64 = 0;
+begin
+  QueryPerformanceFrequency(Frequency);
+  QueryPerformanceCounter(Count);
+
+  Result := Count / Frequency * 1000;
+end;
+{$ELSE}
+begin
+  Result := GetTickCount64();
+end;
+{$ENDIF}
 
 procedure MyWrite(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
@@ -50,7 +76,7 @@ end;
 
 procedure Compile(Run, Disassemble: Boolean);
 var
-  t: UInt64;
+  t: Double;
   Parser: TLapeTokenizerBase;
   Compiler: TLapeCompiler;
 begin
@@ -58,7 +84,7 @@ begin
   Compiler := nil;
   with Form1 do
   try
-    Parser := TLapeTokenizerString.Create({$IF DEFINED(Lape_Unicode)}UTF8Decode(e.Lines.Text){$ELSE}e.Lines.Text{$IFEND});
+    Parser := TLapeTokenizerString.Create({$IF DEFINED(Lape_Unicode)}UTF8Decode(e.Lines.Text){$ELSE}e.Lines.Text{$IFEND}, 'main');
     Compiler := TLapeCompiler.Create(Parser);
     Compiler.OnHint := @WriteHint;
 
@@ -69,15 +95,17 @@ begin
     Compiler.addGlobalMethod('procedure _WriteLn; override;', @MyWriteLn, Form1);
 
     try
-      t := GetTickCount64();
+      t := HighResolutionTime();
       if Compiler.Compile() then
-        m.Lines.Add('Compiling Time: ' + IntToStr(GetTickCount64() - t) + 'ms.')
+        m.Lines.Add('Compiling Time: ' + IntToStr(Round(HighResolutionTime() - t)) + 'ms.')
       else
         m.Lines.Add('Error!');
     except
       on E: Exception do
       begin
         m.Lines.Add('Compilation error: "' + E.Message + '"');
+        if (E is lpException) and (lpException(E).Hint <> '') then
+          m.Lines.Add(lpException(E).Hint);
         Exit;
       end;
     end;
@@ -88,9 +116,16 @@ begin
 
       if Run then
       begin
-        t := GetTickCount64();
-        RunCode(Compiler.Emitter);
-        m.Lines.Add('Running Time: ' + IntToStr(GetTickCount64() - t) + 'ms.');
+        t := HighResolutionTime();
+
+        with TLapeCodeRunner.Create(Compiler.Emitter) do
+        try
+          Run();
+        finally
+          Free();
+        end;
+
+        m.Lines.Add('Running Time: ' + IntToStr(Round(HighResolutionTime - t)) + 'ms.');
       end;
     except
       on E: lpException do
@@ -115,6 +150,39 @@ begin
   Compile(True, False);
 end;
 
+procedure TForm1.btnBenchClick(Sender: TObject);
+begin
+  if (Sender = btnBench) then
+    e.Text := ReadFileToString('tests/bench/Simple.lap')
+  else if (Sender = btnBenchScimark) then
+    e.Text := ReadFileToString('tests/bench/SciMark/SciMark.lap');
+end;
+
+procedure TForm1.FormCreate(Sender: TObject);
+begin
+  if Screen.Fonts.IndexOf('Cascadia Mono SemiLight') > -1 then
+  begin
+    e.Font.Name := 'Cascadia Mono SemiLight';
+    e.Font.Size := 11;
+  end;
+
+  e.Gutter.LineNumberPart().MarkupInfo.Background := clNone;
+  e.Gutter.SeparatorPart().MarkupInfo.Background := clNone;
+  e.Gutter.ChangesPart().Free();
+  e.Gutter.CodeFoldPart().Free();
+  e.Gutter.RightOffset := Scale96ToScreen(5);
+end;
+
+procedure TForm1.FormKeyDown(Sender: TObject; var Key: Word; Shift: TShiftState);
+begin
+  if (Key = VK_R) and (Shift = [ssAlt]) then
+  begin
+    Key := 0;
+
+    btnRun.Click();
+  end;
+end;
+
 procedure TForm1.WriteHint(Sender: TLapeCompilerBase; Msg: lpString);
 begin
   m.Lines.Add(Msg);
@@ -135,6 +203,6 @@ initialization
     'extensions\ffi\bin\win64'
     {$ENDIF}
     );
-{$IFEND}
+{$ENDIF}
 end.
 

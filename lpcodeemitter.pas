@@ -110,8 +110,8 @@ type
     function _op(op: opCode; var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
     function _op(op: opCode; Pos: PDocPos = nil): Integer; overload;
 
-    function _IsInternal(var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
-    function _IsInternal(Pos: PDocPos = nil): Integer; overload;
+    function _IsScriptMethod(var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
+    function _IsScriptMethod(Pos: PDocPos = nil): Integer; overload;
     function _GetExceptionMessage(var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
     function _GetExceptionMessage(Pos: PDocPos = nil): Integer; overload;
     function _GetExceptionLocation(var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
@@ -126,8 +126,6 @@ type
     function _DumpCallStack(Pos: PDocPos = nil): Integer; overload;
     function _ReRaiseException(var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
     function _ReRaiseException(Pos: PDocPos = nil): Integer; overload;
-    function _DynArrayRangeCheck(var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
-    function _DynArrayRangeCheck(Pos: PDocPos = nil): Integer; overload;
     function _InitStackLen(Len: TStackOffset; var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
     function _InitStackLen(Len: TStackOffset; Pos: PDocPos = nil): Integer; overload;
     function _InitStack(Len: TStackOffset; var Offset: Integer; Pos: PDocPos = nil): Integer; overload;
@@ -513,9 +511,9 @@ begin
   _DocPos(Pos, Offset);
 end;
 
-function TLapeCodeEmitterBase._IsInternal(var Offset: Integer; Pos: PDocPos = nil): Integer;
+function TLapeCodeEmitterBase._IsScriptMethod(var Offset: Integer; Pos: PDocPos = nil): Integer;
 begin
-  Result := _op(ocIsInternal, Offset, Pos);
+  Result := _op(ocIsScriptMethod, Offset, Pos);
   DecStack(SizeOf(Pointer) - SizeOf(EvalBool));
 end;
 
@@ -558,12 +556,6 @@ end;
 function TLapeCodeEmitterBase._ReRaiseException(var Offset: Integer; Pos: PDocPos = nil): Integer;
 begin
   Result := _op(ocReRaiseException, Offset, Pos);
-end;
-
-function TLapeCodeEmitterBase._DynArrayRangeCheck(var Offset: Integer; Pos: PDocPos = nil): Integer;
-begin
-  Result := _op(ocDynArrayRangeCheck, Offset, Pos);
-  IncStack(SizeOf(Pointer) + SizeOf(SizeInt));
 end;
 
 function TLapeCodeEmitterBase._InitStackLen(Len: TStackOffset; var Offset: Integer; Pos: PDocPos = nil): Integer;
@@ -703,8 +695,8 @@ function TLapeCodeEmitterBase._DocPos(Pos: PDocPos): Integer;
   var o: Integer; begin o := -1; Result := _DocPos(Pos, o); end;
 function TLapeCodeEmitterBase._op(op: opCode; Pos: PDocPos = nil): Integer;
   var o: Integer; begin o := -1; Result := _op(op, o, Pos); end;
-function TLapeCodeEmitterBase._IsInternal(Pos: PDocPos = nil): Integer;
-  var o: Integer; begin o := -1; Result := _IsInternal(o, Pos); end;
+function TLapeCodeEmitterBase._IsScriptMethod(Pos: PDocPos = nil): Integer;
+  var o: Integer; begin o := -1; Result := _IsScriptMethod(o, Pos); end;
 function TLapeCodeEmitterBase._GetExceptionMessage(Pos: PDocPos = nil): Integer;
   var o: Integer; begin o := -1; Result := _GetExceptionMessage(o, Pos); end;
 function TLapeCodeEmitterBase._GetExceptionLocation(Pos: PDocPos = nil): Integer;
@@ -719,8 +711,6 @@ function TLapeCodeEmitterBase._DumpCallStack(Pos: PDocPos = nil): Integer;
   var o: Integer; begin o := -1; Result := _DumpCallStack(o, Pos); end;
 function TLapeCodeEmitterBase._ReRaiseException(Pos: PDocPos): Integer;
   var o: Integer; begin o := -1; Result := _ReRaiseException(o, Pos); end;
-function TLapeCodeEmitterBase._DynArrayRangeCheck(Pos: PDocPos = nil): Integer;
-  var o: Integer; begin o := -1; Result := _DynArrayRangeCheck(o, Pos); end;
 function TLapeCodeEmitterBase._InitStackLen(Len: TStackOffset; Pos: PDocPos = nil): Integer;
   var o: Integer; begin o := -1; Result := _InitStackLen(Len, o, Pos); end;
 function TLapeCodeEmitterBase._InitStack(Len: TStackOffset; Pos: PDocPos = nil): Integer;

@@ -9,14 +9,13 @@
 
 case opCodeP(Code)^ of
   ocNone: Break;
-  ocIsInternal: DoCheckInternal();
+  ocIsScriptMethod: DoIsScriptMethod();
   ocGetExceptionMessage: DoGetExceptionMessage();
   ocGetExceptionLocation: DoGetExceptionLocation();
   ocGetCallerLocation: DoGetCallerLocation();
   ocGetCallerAddress: DoGetCallerAddress();
   ocGetScriptMethodName: DoGetScriptMethodName();
   ocDumpCallStack: DoDumpCallStack();
-  ocDynArrayRangeCheck: DoDynArrayRangeCheck();
   ocInitStackLen: DoInitStackLen();
   ocInitStack: DoInitStack();
   ocGrowStack: DoGrowStack();

@@ -23,14 +23,13 @@ type
   opCodeP = ^opCode;
   opCode = (
     ocNone,
-    ocIsInternal,                                              //IsInternal
+    ocIsScriptMethod,                                          //IsScriptMethod
     ocGetExceptionMessage,                                     //GetExceptionMessage
     ocGetExceptionLocation,
     ocGetCallerLocation,
     ocGetCallerAddress,
     ocGetScriptMethodName,
     ocDumpCallStack,
-    ocDynArrayRangeCheck,
     ocInitStackLen,                                            //InitStackLen TStackOffset
     ocInitStack,                                               //InitStack TStackOffset
     ocGrowStack,                                               //GrowStack TStackOffset

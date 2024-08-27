@@ -90,7 +90,13 @@ begin
       else
       begin
         Output := Output + Hints;
-        RunCode(Emitter);
+
+        with TLapeCodeRunner.Create(Emitter) do
+        try
+          Run();
+        finally
+          Free();
+        end;
       end;
     except
       on E: Exception do
@@ -171,7 +177,7 @@ var
     if (FindFirst(Folder + '*', faAnyFile, Res) = 0) then
     try
       repeat
-        if ((Res.Attr and faDirectory) <> 0) and (Res.Name <> '.') and (Res.Name <> '..') then
+        if ((Res.Attr and faDirectory) <> 0) and (Res.Name <> '.') and (Res.Name <> '..') and (Res.Name <> 'Bench') then
         begin
           WriteLn('Entering ', Res.Name, '..');
           Result := TestFolder(Folder + Res.Name + PathDelim);

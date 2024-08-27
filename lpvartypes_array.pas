@@ -115,7 +115,7 @@ type
 implementation
 
 uses
-  lpparser, lpeval, lpmessages, lpinternalmethods;
+  lpparser, lpeval, lpmessages, lpinternalmethods, lpeval_extra;
 
 function TLapeType_DynArray.getAsString: lpString;
 begin
@@ -384,7 +384,7 @@ begin
     Inc(Idx);
 
   Lo := VarLo(AVar.Ptr);
-  Hi := VarHi(Avar.Ptr);
+  Hi := VarHi(AVar.Ptr);
   if ((Lo <> nil) and (Idx < Lo.AsInteger)) or ((Hi <> nil) and (Idx > Hi.AsInteger)) then
     if (Lo <> nil) and (Hi <> nil) then
       LapeExceptionFmt(lpeIndexOutOfRange, [idx, Lo.AsInteger, Hi.AsInteger])
@@ -451,23 +451,7 @@ begin
       FCompiler.Emitter._PopStackToVar(AIndex.VarType.Size, AIndex.VarPos.StackVar.Offset, Offset, @_DocPos);
     end;
 
-    TempVar := NullResVar;
-
-    DestVar := NullResVar;
-    DestVar.VarPos.MemPos := mpStack;
-    DestVar.VarType := FCompiler.getBaseType(ltPointer);
-
-    ArrayPtrVar := AVar;
-    ArrayPtrVar.VarType := FCompiler.getBaseType(ltPointer);
-
-    DestVar.VarType.Eval(op_Assign, TempVar, DestVar, ArrayPtrVar, [], Offset, @_DocPos);
-
-    DestVar := NullResVar;
-    DestVar.VarPos.MemPos := mpStack;
-    DestVar.VarType := FCompiler.getBaseType(ltSizeInt);
-    DestVar.VarType.Eval(op_Assign, TempVar, DestVar, AIndex, [], Offset, @_DocPos);
-
-    FCompiler.Emitter._DynArrayRangeCheck(Offset, @_DocPos);
+    FCompiler.Emitter._Eval(getDynArrayRangeCheckEvalProc(AIndex.VarType.BaseIntType), AVar, AVar, AIndex, Offset, Pos);
   end else
   begin
     AIndex.VarType := FCompiler.getBaseType(AIndex.VarType.BaseIntType);
@@ -889,7 +873,7 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_Sum, 'Sum');
   addArrayHelper(TLapeType_ArrayHelper_Mean, 'Mean');
   addArrayHelper(TLapeType_ArrayHelper_Variance, 'Variance');
-  addArrayHelper(TLapeType_ArrayHelper_Stddev, 'Stddev');
+  addArrayHelper(TLapeType_ArrayHelper_Stdev, 'Stdev');
 end;
 
 function TLapeType_StaticArray.getPadding: SizeInt;
@@ -1276,7 +1260,7 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_Sum, 'Sum');
   addArrayHelper(TLapeType_ArrayHelper_Mean, 'Mean');
   addArrayHelper(TLapeType_ArrayHelper_Variance, 'Variance');
-  addArrayHelper(TLapeType_ArrayHelper_Stddev, 'Stddev');
+  addArrayHelper(TLapeType_ArrayHelper_Stdev, 'Stdev');
 end;
 
 function TLapeType_String.VarToString(AVar: Pointer): lpString;
