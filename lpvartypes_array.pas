@@ -19,6 +19,8 @@ type
   TLapeType_DynArray = class(TLapeType_Pointer)
   protected
     function getAsString: lpString; override;
+
+    function canInlineHelper(Field: TLapeGlobalVar; out Typ: TLapeType): Boolean;
   public
     constructor Create(ArrayType: TLapeType; ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil); reintroduce; virtual;
     function CreateCopy(DeepCopy: Boolean = False): TLapeType; override;
@@ -35,6 +37,7 @@ type
     procedure RangeCheck(AVar, AIndex: TLapeGlobalVar; Flags: ELapeEvalFlags); overload; virtual;
     procedure RangeCheck(var AVar, AIndex: TResVar; Flags: ELapeEvalFlags; var Offset: Integer; Pos: PDocPos = nil); overload; virtual;
 
+    function EvalRes(Op: EOperator; Right: TLapeGlobalVar; Flags: ELapeEvalFlags = []): TLapeType; override;
     function EvalRes(Op: EOperator; ARight: TLapeType = nil; Flags: ELapeEvalFlags = []): TLapeType; override;
     function EvalConst(Op: EOperator; ALeft, ARight: TLapeGlobalVar; Flags: ELapeEvalFlags): TLapeGlobalVar; override;
     function Eval(Op: EOperator; var Dest: TResVar; ALeft, ARight: TResVar; Flags: ELapeEvalFlags; var Offset: Integer; Pos: PDocPos = nil): TResVar; override;
@@ -125,6 +128,24 @@ begin
     else
       FAsString := 'array';
   Result := inherited;
+end;
+
+function TLapeType_DynArray.canInlineHelper(Field: TLapeGlobalVar; out Typ: TLapeType): Boolean;
+var
+  Decl: TLapeDeclaration;
+begin
+  if ValidFieldName(Field) and FManagedDecls.Get(PlpString(Field.Ptr)^, TLapeGlobalVar, Decl, bTrue) then
+  begin
+    Typ := TLapeGlobalVar(Decl).VarType;
+
+    Result := (Typ is TLapeType_ArrayHelper_First) or
+              (Typ is TLapeType_ArrayHelper_Last) or
+              (Typ is TLapeType_ArrayHelper_Pop) or
+              (Typ is TLapeType_ArrayHelper_High) or
+              (Typ is TLapeType_ArrayHelper_Low) or
+              (Typ is TLapeType_ArrayHelper_Length);
+  end else
+    Result := False;
 end;
 
 constructor TLapeType_DynArray.Create(ArrayType: TLapeType; ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil);
@@ -442,7 +463,7 @@ begin
   if (not (lefRangeCheck in Flags)) then
     Exit;
 
-  if (BaseType = ltDynArray) then // Use `ocDynArrayRangeCheck` opcode, much faster
+  if (BaseType = ltDynArray) then
   begin
     AIndex.VarType := FCompiler.getBaseType(AIndex.VarType.BaseIntType);
     if (AIndex.VarPos.MemPos = mpStack) then
@@ -451,7 +472,7 @@ begin
       FCompiler.Emitter._PopStackToVar(AIndex.VarType.Size, AIndex.VarPos.StackVar.Offset, Offset, @_DocPos);
     end;
 
-    FCompiler.Emitter._Eval(getDynArrayRangeCheckEvalProc(AIndex.VarType.BaseIntType), AVar, AVar, AIndex, Offset, Pos);
+    FCompiler.Emitter._Eval(getEvalProc_DynArrayRangeCheck(AIndex.VarType.BaseIntType), AVar, AVar, AIndex, Offset, Pos);
   end else
   begin
     AIndex.VarType := FCompiler.getBaseType(AIndex.VarType.BaseIntType);
@@ -479,6 +500,21 @@ begin
       Free();
     end;
   end;
+end;
+
+function TLapeType_DynArray.EvalRes(Op: EOperator; Right: TLapeGlobalVar; Flags: ELapeEvalFlags): TLapeType;
+var
+  Typ: TLapeType;
+begin
+  if (Op = op_Dot) and CanInlineHelper(Right, Typ) then
+    if (Typ is TLapeType_ArrayHelper_First) or (Typ is TLapeType_ArrayHelper_Last) or (Typ is TLapeType_ArrayHelper_Pop) then
+      Result := FPType
+    else if (Typ is TLapeType_ArrayHelper_Low) or (Typ is TLapeType_ArrayHelper_High) or (Typ is TLapeType_ArrayHelper_Length) then
+      Result := FCompiler.getBaseType(ltSizeInt)
+    else
+      Result := nil
+  else
+    Result := inherited EvalRes(Op, Right, Flags);
 end;
 
 function TLapeType_DynArray.EvalRes(Op: EOperator; ARight: TLapeType = nil; Flags: ELapeEvalFlags = []): TLapeType;
@@ -577,6 +613,7 @@ var
   IndexVar, tmpResVar: TResVar;
   wasConstant: Boolean;
   Node: TLapeTree_Base;
+  Typ: TLapeType;
 begin
   Assert(FCompiler <> nil);
   Assert(ALeft.VarType is TLapeType_Pointer);
@@ -820,8 +857,76 @@ begin
       Free();
     end;
     if wasConstant then Result.Writeable := False;
-  end
-  else
+  end else if (Op = op_Dot) and ValidFieldName(ARight) and CanInlineHelper(ARight.VarPos.GlobalVar, Typ) then
+  begin
+    Dest := NullResVar;
+
+    if (Typ is TLapeType_ArrayHelper_First) or
+       (Typ is TLapeType_ArrayHelper_Last) or
+       (Typ is TLapeType_ArrayHelper_Pop) then
+    begin
+      if (Typ is TLapeType_ArrayHelper_First) then
+        IndexVar := _ResVar.New(VarLo())
+      else
+        with TLapeTree_InternalMethod_High.Create(FCompiler, Pos) do
+        try
+          addParam(TLapeTree_ResVar.Create(ALeft, FCompiler, Pos));
+          IndexVar := Compile(Offset);
+        finally
+          Free();
+        end;
+
+      Result := _ResVar.New(FCompiler.getTempVar(FPType, 1));
+      Result := FPType.Eval(op_Assign, tmpResVar, Result, Eval(op_Index, tmpResVar, ALeft, IndexVar, [lefRangeCheck], Offset, Pos), [], Offset, Pos);
+      Result.isConstant := True;
+
+      if (Typ is TLapeType_ArrayHelper_Pop) then
+        with TLapeTree_InternalMethod_SetLength.Create(FCompiler, Pos) do
+        try
+          addParam(TLapeTree_ResVar.Create(ALeft.IncLock(), FCompiler, Pos));
+
+          // Length=High for strings because 1 based indexing...
+          if (ALeft.VarType.BaseType in LapeStringTypes) then
+          begin
+            addParam(TLapeTree_InternalMethod_Pred.Create(FCompiler, Pos));
+            TLapeTree_InternalMethod_Pred(Params[1]).addParam(TLapeTree_ResVar.Create(IndexVar.IncLock(), FCompiler, Pos));
+          end else
+            addParam(TLapeTree_ResVar.Create(IndexVar.IncLock(), FCompiler, Pos));
+
+          Compile(Offset);
+        finally
+          Free();
+        end;
+    end
+    else if (Typ is TLapeType_ArrayHelper_Low) then
+      with TLapeTree_InternalMethod_Low.Create(FCompiler, Pos) do
+      try
+        addParam(TLapeTree_ResVar.Create(ALeft, FCompiler, Pos));
+        Result := FoldConstants(False).Compile(Offset);
+      finally
+        Free();
+      end
+    else if (Typ is TLapeType_ArrayHelper_High) then
+      with TLapeTree_InternalMethod_High.Create(FCompiler, Pos) do
+      try
+        addParam(TLapeTree_ResVar.Create(ALeft, FCompiler, Pos));
+        Result := FoldConstants(False).Compile(Offset);
+      finally
+        Free();
+      end
+    else if (Typ is TLapeType_ArrayHelper_Length) then
+      with TLapeTree_InternalMethod_Length.Create(FCompiler, Pos) do
+      try
+        addParam(TLapeTree_ResVar.Create(ALeft, FCompiler, Pos));
+        Result := FoldConstants(False).Compile(Offset);
+      finally
+        Free();
+      end
+    else
+      LapeException(lpeImpossible, DocPos);
+
+    Assert(Result.isConstant and ((Result.VarPos.MemPos <> mpVar) or (Result.Lock > 0)));
+  end else
     Result := inherited;
 end;
 
@@ -839,11 +944,17 @@ begin
   if (not (lcoArrayHelpers in FCompiler.Options)) then
     Exit;
 
+  // properties, these are done "inlined" in DynArray.Eval
   addArrayHelper(TLapeType_ArrayHelper_Low, 'Low');
   addArrayHelper(TLapeType_ArrayHelper_High, 'High');
+  addArrayHelper(TLapeType_ArrayHelper_Length, 'Length');
+  addArrayHelper(TLapeType_ArrayHelper_First, 'First');
+  addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
+  addArrayHelper(TLapeType_ArrayHelper_Pop, 'Pop');
+
+  // functions
   addArrayHelper(TLapeType_ArrayHelper_Contains, 'Contains');
   addArrayHelper(TLapeType_ArrayHelper_Remove, 'Remove');
-  addArrayHelper(TLapeType_ArrayHelper_RemoveAll, 'RemoveAll');
   addArrayHelper(TLapeType_ArrayHelper_Delete, 'Delete');
   addArrayHelper(TLapeType_ArrayHelper_Insert, 'Insert');
   addArrayHelper(TLapeType_ArrayHelper_Swap, 'Swap');
@@ -853,12 +964,8 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_Sort, 'Sort');
   addArrayHelper(TLapeType_ArrayHelper_Sorted, 'Sorted');
   addArrayHelper(TLapeType_ArrayHelper_SetLength, 'SetLength');
-  addArrayHelper(TLapeType_ArrayHelper_Length, 'Length');
   addArrayHelper(TLapeType_ArrayHelper_Copy, 'Copy');
-  addArrayHelper(TLapeType_ArrayHelper_First, 'First');
-  addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
-  addArrayHelper(TLapeType_ArrayHelper_Pop, 'Pop');
-  addArrayHelper(TLapeType_ArrayHelper_RandomValue, 'RandomValue');
+  addArrayHelper(TLapeType_ArrayHelper_Random, 'Random');
   addArrayHelper(TLapeType_ArrayHelper_Reverse, 'Reverse');
   addArrayHelper(TLapeType_ArrayHelper_Reversed, 'Reversed');
   addArrayHelper(TLapeType_ArrayHelper_Clear, 'Clear');
@@ -866,6 +973,7 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_Extend, 'Extend');
   addArrayHelper(TLapeType_ArrayHelper_Slice, 'Slice');
 
+  // properties
   addArrayHelper(TLapeType_ArrayHelper_Median, 'Median');
   addArrayHelper(TLapeType_ArrayHelper_Mode, 'Mode');
   addArrayHelper(TLapeType_ArrayHelper_Min, 'Min');
@@ -1249,7 +1357,7 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_Copy, 'Copy');
   addArrayHelper(TLapeType_ArrayHelper_First, 'First');
   addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
-  addArrayHelper(TLapeType_ArrayHelper_RandomValue, 'RandomValue');
+  addArrayHelper(TLapeType_ArrayHelper_Random, 'Random');
   addArrayHelper(TLapeType_ArrayHelper_Reversed, 'Reversed');
   addArrayHelper(TLapeType_ArrayHelper_Slice, 'Slice');
 
@@ -1390,7 +1498,7 @@ begin
   addArrayHelper(TLapeType_ArrayHelper_First, 'First');
   addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
   addArrayHelper(TLapeType_ArrayHelper_Pop, 'Pop');
-  addArrayHelper(TLapeType_ArrayHelper_RandomValue, 'RandomValue');
+  addArrayHelper(TLapeType_ArrayHelper_Random, 'Random');
   addArrayHelper(TLapeType_ArrayHelper_Reverse, 'Reverse');
   addArrayHelper(TLapeType_ArrayHelper_Reversed, 'Reversed');
   addArrayHelper(TLapeType_ArrayHelper_Clear, 'Clear');
