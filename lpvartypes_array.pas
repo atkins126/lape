@@ -42,7 +42,6 @@ type
     function EvalConst(Op: EOperator; ALeft, ARight: TLapeGlobalVar; Flags: ELapeEvalFlags): TLapeGlobalVar; override;
     function Eval(Op: EOperator; var Dest: TResVar; ALeft, ARight: TResVar; Flags: ELapeEvalFlags; var Offset: Integer; Pos: PDocPos = nil): TResVar; override;
 
-    procedure addArrayHelper(Helper: TLapeType_HelperClass; AName: String); virtual;
     procedure addArrayHelpers; virtual;
   end;
 
@@ -67,9 +66,9 @@ type
     function Eval(Op: EOperator; var Dest: TResVar; Left, Right: TResVar; Flags: ELapeEvalFlags; var Offset: Integer; Pos: PDocPos = nil): TResVar; override;
     procedure Finalize(AVar: TResVar; var Offset: Integer; UseCompiler: Boolean = True; Pos: PDocPos = nil); override;
 
-    procedure addArrayHelpers; override;
-
     property Range: TLapeRange read FRange;
+
+    procedure addArrayHelpers; override;
   end;
 
   TLapeType_String = class(TLapeType_DynArray)
@@ -143,7 +142,8 @@ begin
               (Typ is TLapeType_ArrayHelper_Pop) or
               (Typ is TLapeType_ArrayHelper_High) or
               (Typ is TLapeType_ArrayHelper_Low) or
-              (Typ is TLapeType_ArrayHelper_Length);
+              (Typ is TLapeType_ArrayHelper_Length) or
+              (Typ is TLapeType_ArrayHelper_IsEmpty);
   end else
     Result := False;
 end;
@@ -420,7 +420,6 @@ var
   Idx: SizeInt;
   Lo, Hi: TLapeGlobalVar;
   Check, Len: TLapeTree_Invoke;
-  TempVar, DestVar, ArrayPtrVar: TResVar;
 begin
   if (not AIndex.HasType()) then
     LapeException(lpeInvalidEvaluation)
@@ -511,6 +510,8 @@ begin
       Result := FPType
     else if (Typ is TLapeType_ArrayHelper_Low) or (Typ is TLapeType_ArrayHelper_High) or (Typ is TLapeType_ArrayHelper_Length) then
       Result := FCompiler.getBaseType(ltSizeInt)
+    else if (Typ is TLapeType_ArrayHelper_IsEmpty) then
+      Result := FCompiler.getBaseType(ltEvalBool)
     else
       Result := nil
   else
@@ -922,6 +923,12 @@ begin
       finally
         Free();
       end
+    else if (Typ is TLapeType_ArrayHelper_IsEmpty) then
+    begin
+      Result := _ResVar.New(FCompiler.getTempVar(ltEvalBool, 1));
+      Result.isConstant := True;
+      inherited Eval(op_cmp_Equal, Result, ALeft, _ResVar.New(FCompiler.getConstant('nil', ltPointer)), [], Offset, Pos);
+    end
     else
       LapeException(lpeImpossible, DocPos);
 
@@ -930,58 +937,20 @@ begin
     Result := inherited;
 end;
 
-procedure TLapeType_DynArray.addArrayHelper(Helper: TLapeType_HelperClass; AName: String);
-begin
-  Assert(lcoArrayHelpers in FCompiler.Options);
-
-  FManagedDecls.addDeclaration(
-    TLapeType_Helper(FCompiler.addManagedType(Helper.Create(FCompiler, AName))).NewGlobalVar(AName)
-  );
-end;
-
 procedure TLapeType_DynArray.addArrayHelpers;
+var
+  Typ: TLapeType;
 begin
-  if (not (lcoArrayHelpers in FCompiler.Options)) then
-    Exit;
+  if (lcoArrayHelpers in FCompiler.Options) and HasType() then
+  begin
+    if (PType.BaseType in [ltDynArray, ltStaticArray]) then
+      Typ := FCompiler.getGlobalType('!arrayhelpers_multidim')
+    else
+      Typ := FCompiler.getGlobalType('!arrayhelpers_flat');
 
-  // properties, these are done "inlined" in DynArray.Eval
-  addArrayHelper(TLapeType_ArrayHelper_Low, 'Low');
-  addArrayHelper(TLapeType_ArrayHelper_High, 'High');
-  addArrayHelper(TLapeType_ArrayHelper_Length, 'Length');
-  addArrayHelper(TLapeType_ArrayHelper_First, 'First');
-  addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
-  addArrayHelper(TLapeType_ArrayHelper_Pop, 'Pop');
-
-  // functions
-  addArrayHelper(TLapeType_ArrayHelper_Contains, 'Contains');
-  addArrayHelper(TLapeType_ArrayHelper_Remove, 'Remove');
-  addArrayHelper(TLapeType_ArrayHelper_Delete, 'Delete');
-  addArrayHelper(TLapeType_ArrayHelper_Insert, 'Insert');
-  addArrayHelper(TLapeType_ArrayHelper_Swap, 'Swap');
-  addArrayHelper(TLapeType_ArrayHelper_Unique, 'Unique');
-  addArrayHelper(TLapeType_ArrayHelper_IndexOf, 'IndexOf');
-  addArrayHelper(TLapeType_ArrayHelper_IndicesOf, 'IndicesOf');
-  addArrayHelper(TLapeType_ArrayHelper_Sort, 'Sort');
-  addArrayHelper(TLapeType_ArrayHelper_Sorted, 'Sorted');
-  addArrayHelper(TLapeType_ArrayHelper_SetLength, 'SetLength');
-  addArrayHelper(TLapeType_ArrayHelper_Copy, 'Copy');
-  addArrayHelper(TLapeType_ArrayHelper_Random, 'Random');
-  addArrayHelper(TLapeType_ArrayHelper_Reverse, 'Reverse');
-  addArrayHelper(TLapeType_ArrayHelper_Reversed, 'Reversed');
-  addArrayHelper(TLapeType_ArrayHelper_Clear, 'Clear');
-  addArrayHelper(TLapeType_ArrayHelper_Append, 'Append');
-  addArrayHelper(TLapeType_ArrayHelper_Extend, 'Extend');
-  addArrayHelper(TLapeType_ArrayHelper_Slice, 'Slice');
-
-  // properties
-  addArrayHelper(TLapeType_ArrayHelper_Median, 'Median');
-  addArrayHelper(TLapeType_ArrayHelper_Mode, 'Mode');
-  addArrayHelper(TLapeType_ArrayHelper_Min, 'Min');
-  addArrayHelper(TLapeType_ArrayHelper_Max, 'Max');
-  addArrayHelper(TLapeType_ArrayHelper_Sum, 'Sum');
-  addArrayHelper(TLapeType_ArrayHelper_Mean, 'Mean');
-  addArrayHelper(TLapeType_ArrayHelper_Variance, 'Variance');
-  addArrayHelper(TLapeType_ArrayHelper_Stdev, 'Stdev');
+    if (Typ <> nil) then
+      FManagedDecls.Parent := TLapeType(Typ).ManagedDeclarations;
+  end;
 end;
 
 function TLapeType_StaticArray.getPadding: SizeInt;
@@ -1341,34 +1310,15 @@ begin
 end;
 
 procedure TLapeType_StaticArray.addArrayHelpers;
+var
+  Typ: TLapeType;
 begin
-  if (not (lcoArrayHelpers in FCompiler.Options)) then
-    Exit;
-
-  addArrayHelper(TLapeType_ArrayHelper_Low, 'Low');
-  addArrayHelper(TLapeType_ArrayHelper_High, 'High');
-  addArrayHelper(TLapeType_ArrayHelper_Contains, 'Contains');
-  addArrayHelper(TLapeType_ArrayHelper_Swap, 'Swap');
-  addArrayHelper(TLapeType_ArrayHelper_Unique, 'Unique');
-  addArrayHelper(TLapeType_ArrayHelper_IndexOf, 'IndexOf');
-  addArrayHelper(TLapeType_ArrayHelper_IndicesOf, 'IndicesOf');
-  addArrayHelper(TLapeType_ArrayHelper_Sorted, 'Sorted');
-  addArrayHelper(TLapeType_ArrayHelper_Length, 'Length');
-  addArrayHelper(TLapeType_ArrayHelper_Copy, 'Copy');
-  addArrayHelper(TLapeType_ArrayHelper_First, 'First');
-  addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
-  addArrayHelper(TLapeType_ArrayHelper_Random, 'Random');
-  addArrayHelper(TLapeType_ArrayHelper_Reversed, 'Reversed');
-  addArrayHelper(TLapeType_ArrayHelper_Slice, 'Slice');
-
-  addArrayHelper(TLapeType_ArrayHelper_Median, 'Median');
-  addArrayHelper(TLapeType_ArrayHelper_Mode, 'Mode');
-  addArrayHelper(TLapeType_ArrayHelper_Min, 'Min');
-  addArrayHelper(TLapeType_ArrayHelper_Max, 'Max');
-  addArrayHelper(TLapeType_ArrayHelper_Sum, 'Sum');
-  addArrayHelper(TLapeType_ArrayHelper_Mean, 'Mean');
-  addArrayHelper(TLapeType_ArrayHelper_Variance, 'Variance');
-  addArrayHelper(TLapeType_ArrayHelper_Stdev, 'Stdev');
+  if (lcoArrayHelpers in FCompiler.Options) and HasType() then
+  begin
+    Typ := FCompiler.getGlobalType('!arrayhelpers_static');
+    if (Typ <> nil) then
+      FManagedDecls.Parent := TLapeType(Typ).ManagedDeclarations;
+  end;
 end;
 
 function TLapeType_String.VarToString(AVar: Pointer): lpString;
@@ -1489,23 +1439,7 @@ end;
 
 procedure TLapeType_String.addArrayHelpers;
 begin
-  if (not (lcoArrayHelpers in FCompiler.Options)) then
-    Exit;
-
-  addArrayHelper(TLapeType_ArrayHelper_SetLength, 'SetLength');
-  addArrayHelper(TLapeType_ArrayHelper_Length, 'Length');
-  addArrayHelper(TLapeType_ArrayHelper_Copy, 'Copy');
-  addArrayHelper(TLapeType_ArrayHelper_First, 'First');
-  addArrayHelper(TLapeType_ArrayHelper_Last, 'Last');
-  addArrayHelper(TLapeType_ArrayHelper_Pop, 'Pop');
-  addArrayHelper(TLapeType_ArrayHelper_Random, 'Random');
-  addArrayHelper(TLapeType_ArrayHelper_Reverse, 'Reverse');
-  addArrayHelper(TLapeType_ArrayHelper_Reversed, 'Reversed');
-  addArrayHelper(TLapeType_ArrayHelper_Clear, 'Clear');
-  addArrayHelper(TLapeType_ArrayHelper_Delete, 'Delete');
-  addArrayHelper(TLapeType_ArrayHelper_Insert, 'Insert');
-  addArrayHelper(TLapeType_ArrayHelper_Extend, 'Extend');
-  addArrayHelper(TLapeType_ArrayHelper_Append, 'Append');
+  { nothing }
 end;
 
 constructor TLapeType_AnsiString.Create(ACompiler: TLapeCompilerBase; AName: lpString = ''; ADocPos: PDocPos = nil);

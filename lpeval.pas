@@ -43,6 +43,8 @@ procedure _LapeFillMem(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$EN
 procedure _LapeMove(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeCompareMem(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 
+procedure _LapeBitCount(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+
 procedure _LapeArraySortWeighted_Int32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeArraySortWeighted_UInt32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 procedure _LapeArraySortWeighted_Int64(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
@@ -457,7 +459,7 @@ var
 implementation
 
 uses
-  Variants, Math, DateUtils,
+  Variants, Math, DateUtils, StrUtils,
   {$IFDEF DELPHI}
   System.WideStrings, System.WideStrUtils,
   {$ENDIF}
@@ -563,6 +565,42 @@ end;
 procedure _LapeCompareMem(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
 begin
   PEvalBool(Result)^ := CompareMem(Params^[0], Params^[1], PSizeInt(Params^[2])^);
+end;
+
+procedure _LapeBitCount(const Params: PParamArray; const Result: Pointer); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
+
+  {$IF NOT DECLARED(PopCnt)}
+  function PopCnt(AValue : UInt64): UInt64;
+  const
+    PopCntData: array[0..15] of Byte = (0,1,1,2,1,2,2,3,1,2,2,3,2,3,3,4);
+  var
+    i : Byte;
+  begin
+    Result:=0;
+    for i := 0 to 13 do
+      begin
+        Inc(Result, PopCntData[AValue and $f]);
+        AValue := AValue shr 4;
+      end;
+  end;
+  {$ENDIF}
+
+var
+  p: Pointer;
+begin
+  p := Params^[0];
+
+  case PUInt8(Params^[1])^ of
+    1:  PUInt32(Result)^ := PopCnt(UInt64(UInt8(p^)));  // upcast
+    2:  PUInt32(Result)^ := PopCnt(UInt64(UInt16(p^))); // ..
+    4:  PUInt32(Result)^ := PopCnt(UInt64(UInt32(p^))); // ..
+    8:  PUInt32(Result)^ := PopCnt(UInt64(p^));
+    16: PUInt32(Result)^ := PopCnt(PUInt64(p)[0]) + PopCnt(PUInt64(p)[1]);
+    24: PUInt32(Result)^ := PopCnt(PUInt64(p)[0]) + PopCnt(PUInt64(p)[1]) + PopCnt(PUInt64(p)[2]);
+    32: PUInt32(Result)^ := PopCnt(PUInt64(p)[0]) + PopCnt(PUInt64(p)[1]) + PopCnt(PUInt64(p)[2]) + PopCnt(PUInt64(p)[3]);
+    else
+      LapeException(lpeImpossible);
+  end;
 end;
 
 procedure _LapeArraySortWeighted_Int32(const Params: PParamArray); {$IFDEF Lape_CDECL}cdecl;{$ENDIF}
